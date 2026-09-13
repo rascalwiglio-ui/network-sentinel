@@ -4,36 +4,35 @@ Network Sentinel is a local defensive monitoring dashboard for your own computer
 
 > Use it only on systems and networks that you own or are explicitly authorized to monitor.
 
-## v0.3.0 — Pulse
+## v0.4.0 — Watchtower
 
-Pulse turns the original monitor into a much more usable security console:
+Watchtower adds a behavioral intelligence layer on top of the Pulse dashboard.
 
-- modern responsive dashboard;
-- active LAN discovery on private IPv4 networks;
-- ARP inventory, reverse-DNS hostnames and offline MAC vendor lookup;
-- interactive local network topology;
-- realtime host RX/TX traffic graph;
-- listening ports and active TCP/UDP connections;
-- alerts for new devices, MAC changes, new listeners and connection spikes;
-- trusted-device workflow;
-- searchable/filterable tables;
-- recent security activity feed;
-- Sentinel Score, a simple attention heuristic;
-- SQLite persistence and automatic schema migration;
-- REST API and built-in FastAPI docs.
+### New in v0.4
 
-The Sentinel Score is intentionally labelled as a heuristic. It is not a probability that a machine or network has been compromised.
+- **Behavior baseline**: Sentinel learns processes, external endpoints and DNS names during a configurable warm-up period.
+- **Communication history**: external connections are aggregated locally by process, protocol, remote IP and port.
+- **Anomaly detection** for:
+  - a process that starts making external network connections for the first time after the baseline is ready;
+  - unusually high destination fan-out;
+  - many previously unseen remote endpoints appearing in one cycle;
+  - bursts of previously unseen DNS names;
+  - newly observed punycode/IDN domains as a low-severity review signal.
+- **DNS visibility**: on Windows, Sentinel reads the local DNS client cache through PowerShell `Get-DnsClientCache`. Other platforms are best-effort and clearly report when cache visibility is unavailable.
+- **Per-device risk heuristic**: each device gets an explainable local score based on trust state, age, MAC characteristics and missing identity data.
+- **Intelligence UI**: baseline progress, anomaly feed, DNS observations and learned communication endpoints.
+- **History retention**: aggregated DNS/endpoint history is pruned automatically.
+
+All risk and Sentinel scores are explicitly heuristics. They are not probabilities of compromise and do not replace an IDS/EDR.
 
 ## Windows quick start
 
-Open PowerShell inside the repository. The easiest Windows path avoids PowerShell execution-policy issues entirely:
+From PowerShell inside the repository:
 
 ```powershell
 .\scripts\bootstrap.cmd
 .\scripts\run.cmd
 ```
-
-PowerShell-native `.ps1` wrappers are also included.
 
 Open:
 
@@ -41,36 +40,24 @@ Open:
 http://127.0.0.1:8765
 ```
 
-API docs:
+FastAPI docs:
 
 ```text
 http://127.0.0.1:8765/docs
 ```
 
-## Upgrade with Git
+## Upgrade from v0.3 with Git
 
-Once your clone tracks `origin/main`, updates are intentionally simple:
+Stop Sentinel with `CTRL+C`, then:
 
 ```powershell
 .\scripts\update.cmd
 .\scripts\run.cmd
 ```
 
-The update script refuses to overwrite uncommitted work, pulls `origin/main` using fast-forward only, then refreshes Python dependencies.
-
-You can also update manually:
-
-```powershell
-git pull --ff-only
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m sentinel.app
-```
-
-Existing `sentinel.db` data is kept. v0.3 automatically adds the new trusted-device field.
+The existing `sentinel.db` is migrated automatically. Watchtower creates new local tables for DNS records, communication history and process baselines without deleting previous devices or alerts.
 
 ## Configuration
-
-Useful environment variables:
 
 ```text
 SENTINEL_HOST=127.0.0.1
@@ -78,51 +65,74 @@ SENTINEL_PORT=8765
 SENTINEL_INTERVAL=2
 SENTINEL_DB=sentinel.db
 SENTINEL_CONN_SPIKE=80
+
 SENTINEL_ACTIVE_DISCOVERY=1
 SENTINEL_DISCOVERY_INTERVAL=60
 SENTINEL_MAX_DISCOVERY_HOSTS=254
 SENTINEL_PING_TIMEOUT_MS=350
 SENTINEL_DEVICE_ONLINE_WINDOW=130
+
+SENTINEL_DNS_MONITORING=1
+SENTINEL_DNS_INTERVAL=10
+SENTINEL_DNS_BURST_THRESHOLD=25
+SENTINEL_BASELINE_WARMUP=120
+SENTINEL_PROCESS_FANOUT=25
+SENTINEL_ENDPOINT_CHURN=12
+SENTINEL_HISTORY_RETENTION_DAYS=7
 ```
 
-Example PowerShell:
+For a longer learning phase:
 
 ```powershell
-$env:SENTINEL_DISCOVERY_INTERVAL="120"
-.\scripts\run.ps1
+$env:SENTINEL_BASELINE_WARMUP="600"
+.\scripts\run.cmd
 ```
 
-## Discovery safety boundary
+To disable DNS cache monitoring:
 
-Active discovery is deliberately constrained:
+```powershell
+$env:SENTINEL_DNS_MONITORING="0"
+.\scripts\run.cmd
+```
 
-- only a directly connected private IPv4 LAN is considered;
-- at most 254 addresses are checked;
-- no exploit, brute-force or stealth functionality is included;
-- you can disable active discovery with `SENTINEL_ACTIVE_DISCOVERY=0`.
+## What the baseline means
+
+For the first `SENTINEL_BASELINE_WARMUP` seconds, Sentinel records normal observations without generating the new-process, endpoint-churn or DNS-burst anomaly alerts. Once learning is complete, previously unseen behavior can generate review signals.
+
+A short baseline is convenient for development. For long-running home or lab monitoring, 5–15 minutes is more useful than the 120-second default.
 
 ## API
-
-Main endpoints:
 
 ```text
 GET  /api/status
 GET  /api/overview
+GET  /api/baseline
 GET  /api/network
 GET  /api/devices
 POST /api/devices/{ip}/trust?trusted=true
 GET  /api/listeners
 GET  /api/connections
 GET  /api/traffic
+GET  /api/dns
+GET  /api/communications
+GET  /api/anomalies
 GET  /api/alerts
 POST /api/alerts/{id}/ack
 POST /api/alerts/ack-all
 POST /api/discovery/scan
 ```
 
+## Scope and safety boundary
+
+Network Sentinel is defensive monitoring software. Active LAN discovery remains deliberately constrained to the directly connected private IPv4 network and at most 254 addresses. Watchtower does not add exploitation, credential attacks, stealth scanning, traffic interception or offensive automation.
+
+DNS visibility reads the local host's cache; it is not a packet sniffer and therefore does not claim to see every DNS request made by every device on the LAN.
+
+Communication history describes the computer running Sentinel. Per-device traffic attribution still requires an authorized router sensor or packet-capture component and is not claimed in v0.4.
+
 ## Repository workflow
 
-Keep `main` stable and build larger features on branches:
+Keep `main` stable and develop releases on branches:
 
 ```powershell
 git switch -c feature/my-feature
@@ -133,19 +143,3 @@ git push -u origin feature/my-feature
 ```
 
 Then merge through a pull request.
-
-## Current limitation
-
-The bandwidth chart measures total traffic of the machine running Sentinel. Per-device flow attribution requires packet capture or router telemetry and is not claimed by v0.3.
-
-## Roadmap
-
-Candidate v0.4 work:
-
-- optional packet-capture sensor;
-- DNS visibility;
-- per-device flow statistics;
-- baseline/anomaly engine;
-- alert notifications;
-- local AI analyst for explaining already-collected events;
-- multi-agent deployment.

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0 - Watchtower
+
+- Added a local behavior-baseline engine with a configurable learning warm-up.
+- Added external communication history aggregated by process, protocol, remote IP and port.
+- Added anomaly detection for new network-active processes after baseline learning.
+- Added anomaly detection for unusually high destination fan-out and endpoint churn.
+- Added best-effort DNS cache visibility, with first-class Windows support through `Get-DnsClientCache`.
+- Added DNS burst detection and low-severity visibility for newly observed punycode/IDN domains.
+- Added explainable per-device risk heuristics with reasons shown in the UI.
+- Added `/api/baseline`, `/api/dns`, `/api/communications` and `/api/anomalies` endpoints.
+- Added local history retention and periodic pruning for DNS and communication telemetry.
+- Expanded the dashboard with a dedicated Intelligence area, baseline progress, anomaly feed, DNS table and external endpoint history.
+- Expanded global search to domains and learned communications.
+- Added device filtering by risk level and anomaly-specific alert filtering.
+- Improved topology highlighting for medium/high-risk devices.
+- Existing SQLite databases migrate in place; no reset is required.
+
 ## 0.3.0 - Pulse
 
 - Completely redesigned responsive dashboard with persistent sidebar.

@@ -1,6 +1,7 @@
 const state = {
-  devices: [], listeners: [], connections: [], alerts: [], traffic: [], network: {}, overview: {}, status: {},
-  deviceFilter: 'all', alertFilter: 'open', query: ''
+  devices: [], listeners: [], connections: [], alerts: [], traffic: [],
+  network: {}, overview: {}, status: {}, dns: [], communications: [],
+  anomalies: [], baseline: {}, deviceFilter: 'all', alertFilter: 'open', query: ''
 };
 
 const $ = id => document.getElementById(id);
@@ -40,11 +41,14 @@ function renderOverview(){
   $('scoreLabel').textContent=label;
 
   $('devicesOnline').textContent=o.devices_online ?? '—';
-  $('devicesMeta').textContent=`${o.devices_total ?? 0} known · ${o.devices_untrusted_online ?? 0} need trust`;
+  $('devicesMeta').textContent=`${o.devices_total ?? 0} known · ${o.devices_risky_online ?? 0} risk`;
   $('connectionsCount').textContent=o.connections ?? '—';
   $('listenersCount').textContent=o.listeners ?? '—';
   $('alertsCount').textContent=o.alerts_open ?? '—';
   $('alertsMeta').textContent=`${o.alerts_high ?? 0} high · ${o.alerts_medium ?? 0} medium`;
+  $('anomaliesCount').textContent=o.anomalies_open ?? '—';
+  $('domainsCount').textContent=o.known_domains ?? '—';
+  $('baselineMeta').textContent=state.baseline.ready?'baseline ready':'learning baseline';
   $('rxRate').textContent=fmtRate(o.rx_bps);
   $('txRate').textContent=fmtRate(o.tx_bps);
   $('lastScan').textContent=when(s.last_scan);
@@ -57,6 +61,62 @@ function renderOverview(){
   $('enginePill').textContent=discovering?'discovering':online?'online':'offline';
 }
 
+function renderBaseline(){
+  const b=state.baseline || {}, counts=b.counts || {};
+  const ready=Boolean(b.ready), warmup=Number(b.warmup_seconds || 1), remaining=Number(b.remaining_seconds || 0);
+  const elapsed=Math.max(0,warmup-remaining), progress=ready?100:Math.min(100,Math.round(elapsed/warmup*100));
+  $('baselinePill').className=`pill ${ready?'good':'warn'}`;
+  $('baselinePill').textContent=ready?'ready':'learning';
+  $('baselineProgress').style.width=`${progress}%`;
+  $('baselineStatusText').textContent=ready
+    ? `Baseline active · ${b.history_retention_days ?? 7} day history retention`
+    : `Learning normal activity · ${remaining}s remaining`;
+  $('knownProcesses').textContent=counts.processes ?? 0;
+  $('knownEndpoints').textContent=counts.endpoints ?? 0;
+  $('knownDomains').textContent=counts.domains ?? 0;
+
+  const supported=b.dns_supported;
+  $('dnsPill').className=`pill ${supported===true?'good':supported===false?'warn':'neutral'}`;
+  $('dnsPill').textContent=supported===true?'monitoring':supported===false?'limited':'checking';
+  $('dnsPill').title=b.dns_error || '';
+}
+
+function renderAnomalies(){
+  const open=state.anomalies.filter(a=>!a.acknowledged);
+  $('anomalyBadge').className=`pill ${open.length?'warn':'good'}`;
+  $('anomalyBadge').textContent=`${open.length} open`;
+  const rows=state.anomalies.slice(0,8);
+  $('anomalyFeed').innerHTML=rows.length?rows.map(a=>`
+    <div class="anomaly-item ${a.acknowledged?'acknowledged':''}">
+      <div class="anomaly-icon ${esc(a.severity)}">${a.severity==='high'?'!':'⌁'}</div>
+      <div class="anomaly-copy"><strong>${esc(a.title)}</strong><span>${esc(a.details)}</span></div>
+      <div class="anomaly-time">${shortWhen(a.created_at)}</div>
+    </div>`).join(''):`<div class="empty">No behavior anomalies observed</div>`;
+}
+
+function renderDns(){
+  const rows=state.dns.filter(d=>matchesQuery(d.domain,d.record_type,d.data));
+  $('dnsTable').innerHTML=rows.length?rows.slice(0,200).map(d=>`<tr>
+    <td><span class="domain-name">${esc(d.domain)}</span></td>
+    <td>${esc(d.record_type)}</td>
+    <td class="truncate-cell" title="${esc(d.data)}">${esc(d.data||'—')}</td>
+    <td>${esc(d.seen_count)}</td>
+    <td>${when(d.last_seen)}</td>
+  </tr>`).join(''):`<tr><td colspan="5"><div class="empty">No DNS records in this view</div></td></tr>`;
+}
+
+function renderCommunications(){
+  const rows=state.communications.filter(c=>matchesQuery(c.process,c.proto,c.remote_ip,c.remote_port));
+  $('commBadge').textContent=`${state.communications.length} learned`;
+  $('communicationsTable').innerHTML=rows.length?rows.slice(0,250).map(c=>`<tr>
+    <td><span class="device-name">${esc(c.process)}</span></td>
+    <td>${esc(String(c.proto).toUpperCase())}</td>
+    <td>${esc(c.remote_ip)}:${esc(c.remote_port)}</td>
+    <td>${esc(c.seen_count)}</td>
+    <td>${when(c.last_seen)}</td>
+  </tr>`).join(''):`<tr><td colspan="5"><div class="empty">No learned external endpoints</div></td></tr>`;
+}
+
 function renderNetworkInfo(){
   const n=state.network, s=state.status;
   if(!n || !n.cidr){
@@ -66,6 +126,7 @@ function renderNetworkInfo(){
   const rows=[
     ['Interface',n.interface],['Local IP',n.local_ip],['Local MAC',n.local_mac||'unknown'],
     ['Subnet',n.cidr],['Gateway',n.gateway||'unknown'],['Discovery',s.active_discovery?'active':'passive'],
+    ['DNS telemetry',s.dns_supported===true?'available':s.dns_supported===false?'limited':'checking'],
     ['Last discovery',when(s.last_discovery)]
   ];
   $('networkInfo').innerHTML=rows.map(([k,v])=>`<div class="kv-row"><div class="kv-key">${esc(k)}</div><div class="kv-val">${esc(v)}</div></div>`).join('');
@@ -103,10 +164,12 @@ function drawNode(svg,x,y,d,localIp,large){
   let cls='node-circle';
   if(d.is_gateway) cls+=' node-gateway'; else if(d.ip===localIp) cls+=' node-local'; else if(!d.online) cls+=' node-offline';
   if(d.trusted) cls+=' node-trusted';
+  if((d.risk?.score||0)>=60) cls+=' node-risk-high'; else if((d.risk?.score||0)>=30) cls+=' node-risk-medium';
   g.appendChild(addSvg('circle',{cx:x,cy:y,r:large?24:15,class:cls}));
-  const title=addSvg('title',{},`${d.hostname||d.ip}\n${d.ip}\n${d.vendor||'Unknown vendor'}\n${d.trusted?'Trusted':'Not trusted yet'}`); g.appendChild(title);
+  const reasons=(d.risk?.reasons||[]).join(', ');
+  g.appendChild(addSvg('title',{},`${d.hostname||d.ip}\n${d.ip}\n${d.vendor||'Unknown vendor'}\nRisk ${d.risk?.score ?? 0}/100\n${reasons}`));
   g.appendChild(addSvg('text',{x,y:y+(large?39:30),'text-anchor':'middle',class:'node-label'},(d.hostname||d.ip).slice(0,25)));
-  g.appendChild(addSvg('text',{x,y:y+(large?51:41),'text-anchor':'middle',class:'node-sub'},d.hostname?d.ip:(d.is_gateway?'gateway':'')));
+  g.appendChild(addSvg('text',{x,y:y+(large?51:41),'text-anchor':'middle',class:'node-sub'},d.hostname?`${d.ip} · R${d.risk?.score ?? 0}`:(d.is_gateway?'gateway':'')));
   svg.appendChild(g);
 }
 
@@ -133,16 +196,24 @@ function matchesQuery(...parts){
   return parts.some(v=>String(v??'').toLowerCase().includes(state.query));
 }
 
+function riskBadge(risk){
+  const r=risk||{score:0,level:'low',reasons:[]};
+  const title=(r.reasons||[]).join(' · ');
+  return `<span class="risk-badge ${esc(r.level)}" title="${esc(title)}"><b>${esc(r.score)}</b><span>${esc(r.level)}</span></span>`;
+}
+
 function renderDevices(){
-  let rows=state.devices.filter(d=>matchesQuery(d.ip,d.mac,d.hostname,d.vendor));
+  let rows=state.devices.filter(d=>matchesQuery(d.ip,d.mac,d.hostname,d.vendor,d.risk?.reasons?.join(' ')));
   if(state.deviceFilter==='online') rows=rows.filter(d=>d.online);
   if(state.deviceFilter==='untrusted') rows=rows.filter(d=>d.online&&!d.trusted&&!d.is_gateway);
+  if(state.deviceFilter==='risk') rows=rows.filter(d=>(d.risk?.score||0)>=30);
   $('devicesTable').innerHTML=rows.length?rows.map(d=>`<tr>
     <td><span class="device-status"><span class="dot ${d.online?'online':''}"></span>${d.online?'Online':'Offline'}</span></td>
     <td><span class="device-name">${esc(d.hostname || (d.is_gateway?'Gateway':'Unknown device'))}</span><span class="subline">${d.is_gateway?'default gateway':esc(d.interface||'')}</span></td>
     <td>${esc(d.ip)}</td><td>${esc(d.mac||'—')}</td><td>${esc(d.vendor||'—')}</td>
+    <td>${riskBadge(d.risk)}</td>
     <td><button class="trust-btn ${d.trusted?'trusted':''}" onclick="setTrust('${encodeURIComponent(d.ip)}',${!d.trusted})">${d.trusted?'Trusted':'Mark trusted'}</button></td>
-    <td>${when(d.last_seen)}</td></tr>`).join(''):`<tr><td colspan="7"><div class="empty">No matching devices</div></td></tr>`;
+    <td>${when(d.last_seen)}</td></tr>`).join(''):`<tr><td colspan="8"><div class="empty">No matching devices</div></td></tr>`;
 }
 
 function renderSockets(){
@@ -157,6 +228,7 @@ function visibleAlerts(){
   let rows=state.alerts.filter(a=>matchesQuery(a.title,a.details,a.kind,a.severity));
   if(state.alertFilter==='open') rows=rows.filter(a=>!a.acknowledged);
   if(state.alertFilter==='high') rows=rows.filter(a=>a.severity==='high'&&!a.acknowledged);
+  if(state.alertFilter==='anomaly') rows=rows.filter(a=>String(a.kind||'').startsWith('anomaly_'));
   return rows;
 }
 
@@ -181,22 +253,26 @@ async function scanNow(){
   catch(e){toast(e.message);}finally{setTimeout(()=>{btn.disabled=false;btn.textContent='Scan network';},2500);}
 }
 
-function renderAll(){renderOverview();renderNetworkInfo();renderTopology();drawTraffic();renderDevices();renderSockets();renderAlerts();}
+function renderAll(){
+  renderOverview();renderBaseline();renderAnomalies();renderDns();renderCommunications();
+  renderNetworkInfo();renderTopology();drawTraffic();renderDevices();renderSockets();renderAlerts();
+}
 
 async function refresh(){
   try{
-    const [status,overview,network,devices,listeners,connections,alerts,traffic]=await Promise.all([
-      api('/api/status'),api('/api/overview'),api('/api/network'),api('/api/devices'),api('/api/listeners'),api('/api/connections'),api('/api/alerts'),api('/api/traffic')
+    const [status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline]=await Promise.all([
+      api('/api/status'),api('/api/overview'),api('/api/network'),api('/api/devices'),api('/api/listeners'),api('/api/connections'),api('/api/alerts'),api('/api/traffic'),
+      api('/api/dns?limit=250'),api('/api/communications?limit=300'),api('/api/anomalies?limit=100'),api('/api/baseline')
     ]);
-    Object.assign(state,{status,overview,network,devices,listeners,connections,alerts,traffic});renderAll();
+    Object.assign(state,{status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline});renderAll();
   }catch(e){$('sideStatus').textContent='API unavailable';$('sideDot').className='status-dot';console.error(e);}
 }
 
 $('scanBtn').addEventListener('click',scanNow);$('ackAllBtn').addEventListener('click',ackAll);
-$('globalSearch').addEventListener('input',e=>{state.query=e.target.value.trim().toLowerCase();renderDevices();renderSockets();renderAlerts();});
+$('globalSearch').addEventListener('input',e=>{state.query=e.target.value.trim().toLowerCase();renderDevices();renderSockets();renderAlerts();renderDns();renderCommunications();});
 document.querySelectorAll('[data-device-filter]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-device-filter]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.deviceFilter=b.dataset.deviceFilter;renderDevices();}));
 document.querySelectorAll('[data-alert-filter]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-alert-filter]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.alertFilter=b.dataset.alertFilter;renderAlerts();}));
 document.querySelectorAll('.nav-link').forEach(a=>a.addEventListener('click',()=>{document.querySelectorAll('.nav-link').forEach(x=>x.classList.remove('active'));a.classList.add('active');}));
 window.addEventListener('resize',drawTraffic);
 
-refresh();setInterval(refresh,2500);
+refresh();setInterval(refresh,3000);

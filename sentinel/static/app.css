@@ -43,3 +43,41 @@ button{color:inherit}
 @media(max-width:1180px){.hero-grid,.wide-left,.equal{grid-template-columns:1fr}.stat-grid{grid-template-columns:1fr 1fr}.network-card{min-height:auto}.map-wrap{height:380px}}
 @media(max-width:820px){.sidebar{width:72px;padding:18px 10px}.brand-wrap{padding:4px 6px 18px}.brand-wrap>div:last-child,.nav-link:not(.active){font-size:0}.nav-link{justify-content:center}.nav-link span{font-size:14px}.sidebar-footer{display:none}.main{margin-left:72px;padding:0 14px 28px}.topbar{height:auto;padding:17px 0;align-items:flex-start}.top-actions{flex-direction:column;align-items:flex-end}.search-wrap{width:220px}.hero-grid{grid-template-columns:1fr}.stat-grid{grid-template-columns:1fr 1fr}.map-wrap{height:340px}}
 @media(max-width:560px){.topbar{display:block}.top-actions{margin-top:12px;align-items:stretch}.search-wrap{width:100%}.stat-grid{grid-template-columns:1fr}.score-wrap{align-items:flex-start}.score-ring{width:84px;height:84px;flex-basis:84px}.score-ring span{font-size:25px}.filter-row{overflow:auto;max-width:230px}.main{padding-right:10px;padding-left:10px}.sidebar{display:none}.main{margin-left:0}.map-wrap{height:300px}}
+
+/* v0.4 Watchtower */
+.stat-grid-six{grid-template-columns:repeat(6,minmax(0,1fr))}
+.stat-icon.violet{color:var(--violet)}
+.stat-icon.green{color:var(--green);font-size:9px;font-weight:800}
+.intel-summary-grid{display:grid;grid-template-columns:.85fr 1.15fr;gap:16px}
+.baseline-body{padding:18px}
+.baseline-progress{height:7px;border-radius:999px;background:#172334;border:1px solid #20344a;overflow:hidden}
+.baseline-progress-fill{height:100%;width:0;background:linear-gradient(90deg,var(--cyan),var(--green));transition:width .4s ease}
+.baseline-copy{font-size:11px;color:var(--muted);margin:10px 0 15px}
+.baseline-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.baseline-metrics>div{padding:12px;border:1px solid var(--line-soft);border-radius:10px;background:#0b131d}
+.baseline-metrics span{display:block;font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.baseline-metrics strong{display:block;font-size:20px;margin-top:4px}
+.anomaly-feed{max-height:235px;overflow:auto;padding:7px 12px}
+.anomaly-item{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:10px;padding:10px 3px;border-bottom:1px solid var(--line-soft)}
+.anomaly-item:last-child{border-bottom:0}
+.anomaly-item.acknowledged{opacity:.45}
+.anomaly-icon{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:#172131;border:1px solid #26394f;color:var(--amber);font-size:12px;font-weight:800}
+.anomaly-icon.high{color:var(--red);border-color:#5a3039;background:rgba(255,112,125,.06)}
+.anomaly-icon.low{color:var(--green);border-color:#2e5743;background:rgba(98,215,149,.06)}
+.anomaly-copy strong{display:block;font-size:11px}
+.anomaly-copy span{display:block;color:var(--muted);font-size:9px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:650px}
+.anomaly-time{font-size:9px;color:var(--muted-2)}
+.intelligence-table{max-height:360px}
+.domain-name{font-weight:650;color:#dfeaff}
+.truncate-cell{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+.risk-badge{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);padding:4px 7px;border-radius:999px;font-size:8px;text-transform:uppercase;letter-spacing:.04em;background:#101925}
+.risk-badge b{font-size:10px}
+.risk-badge.low{color:var(--green);border-color:#2c5642}
+.risk-badge.medium{color:var(--amber);border-color:#5d4828}
+.risk-badge.high{color:var(--red);border-color:#60323a}
+.node-risk-medium{stroke:var(--amber)!important;filter:drop-shadow(0 0 5px rgba(243,186,85,.35))}
+.node-risk-high{stroke:var(--red)!important;filter:drop-shadow(0 0 7px rgba(255,112,125,.45))}
+@media(max-width:1400px){.stat-grid-six{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:1180px){.intel-summary-grid{grid-template-columns:1fr}}
+@media(max-width:820px){.stat-grid-six{grid-template-columns:1fr 1fr}.anomaly-copy span{max-width:350px}}
+@media(max-width:560px){.stat-grid-six{grid-template-columns:1fr}.baseline-metrics{grid-template-columns:1fr 1fr 1fr}.anomaly-copy span{max-width:210px}}

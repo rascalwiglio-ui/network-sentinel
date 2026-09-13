@@ -32,5 +32,16 @@ class Settings:
         10,
     )
 
+    dns_monitoring: bool = _bool("SENTINEL_DNS_MONITORING", True)
+    dns_interval: float = max(float(os.getenv("SENTINEL_DNS_INTERVAL", "10")), 3.0)
+    dns_burst_threshold: int = max(int(os.getenv("SENTINEL_DNS_BURST_THRESHOLD", "25")), 5)
+    baseline_warmup_seconds: int = max(int(os.getenv("SENTINEL_BASELINE_WARMUP", "120")), 15)
+    process_fanout_threshold: int = max(int(os.getenv("SENTINEL_PROCESS_FANOUT", "25")), 5)
+    endpoint_churn_threshold: int = max(int(os.getenv("SENTINEL_ENDPOINT_CHURN", "12")), 3)
+    history_retention_days: int = min(
+        max(int(os.getenv("SENTINEL_HISTORY_RETENTION_DAYS", "7")), 1),
+        90,
+    )
+
 
 settings = Settings()

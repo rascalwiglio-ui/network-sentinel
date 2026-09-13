@@ -20,6 +20,7 @@
 
       <nav class="nav">
         <a class="nav-link active" href="#overview"><span>◈</span> Overview</a>
+        <a class="nav-link" href="#intelligence"><span>⌁</span> Intelligence</a>
         <a class="nav-link" href="#network"><span>⌘</span> Network</a>
         <a class="nav-link" href="#devices"><span>▦</span> Devices</a>
         <a class="nav-link" href="#connections"><span>⇄</span> Connections</a>
@@ -28,7 +29,7 @@
 
       <div class="sidebar-footer">
         <div class="mini-status"><span id="sideDot" class="status-dot"></span><span id="sideStatus">Connecting</span></div>
-        <div class="version">v0.3.0 · Pulse</div>
+        <div class="version">v0.4.0 · Watchtower</div>
       </div>
     </aside>
 
@@ -36,12 +37,12 @@
       <header class="topbar">
         <div>
           <div class="eyebrow">LOCAL SECURITY CONSOLE</div>
-          <h1>Overview</h1>
+          <h1>Watchtower</h1>
         </div>
         <div class="top-actions">
           <div class="search-wrap">
             <span>⌕</span>
-            <input id="globalSearch" type="search" placeholder="Cerca IP, host, processo...">
+            <input id="globalSearch" type="search" placeholder="Cerca IP, dominio, processo...">
           </div>
           <button id="scanBtn" class="btn btn-primary" type="button">Scan network</button>
         </div>
@@ -54,13 +55,13 @@
               <div class="panel-kicker">SENTINEL SCORE</div>
               <div class="panel-title">Attention level</div>
             </div>
-            <span class="pill neutral">heuristic</span>
+            <span class="pill neutral">explainable heuristic</span>
           </div>
           <div class="score-wrap">
             <div class="score-ring" id="scoreRing"><span id="scoreValue">--</span></div>
             <div class="score-copy">
               <strong id="scoreLabel">Loading...</strong>
-              <p>Indicatore locale basato su alert aperti e device non ancora fidati. Non è una probabilità di compromissione.</p>
+              <p>Combina alert aperti, anomalie comportamentali e device non ancora fidati. Non è una probabilità di compromissione.</p>
             </div>
           </div>
         </article>
@@ -82,34 +83,80 @@
         </article>
       </section>
 
-      <section class="stat-grid">
+      <section class="stat-grid stat-grid-six">
         <article class="stat-card"><span class="stat-icon cyan">◉</span><div><span>Online devices</span><strong id="devicesOnline">—</strong><small id="devicesMeta">—</small></div></article>
         <article class="stat-card"><span class="stat-icon blue">⇄</span><div><span>Connections</span><strong id="connectionsCount">—</strong><small>current host sockets</small></div></article>
         <article class="stat-card"><span class="stat-icon amber">◎</span><div><span>Listening ports</span><strong id="listenersCount">—</strong><small>TCP / UDP</small></div></article>
         <article class="stat-card"><span class="stat-icon red">△</span><div><span>Open alerts</span><strong id="alertsCount">—</strong><small id="alertsMeta">—</small></div></article>
+        <article class="stat-card"><span class="stat-icon violet">⌁</span><div><span>Anomalies</span><strong id="anomaliesCount">—</strong><small>behavior signals</small></div></article>
+        <article class="stat-card"><span class="stat-icon green">DNS</span><div><span>Known domains</span><strong id="domainsCount">—</strong><small id="baselineMeta">baseline</small></div></article>
+      </section>
+
+      <section id="intelligence" class="section intel-summary-grid">
+        <article class="panel baseline-card">
+          <div class="panel-head">
+            <div><div class="panel-kicker">BEHAVIOR BASELINE</div><div class="panel-title">Learning engine</div></div>
+            <span id="baselinePill" class="pill neutral">learning</span>
+          </div>
+          <div class="baseline-body">
+            <div class="baseline-progress"><div id="baselineProgress" class="baseline-progress-fill"></div></div>
+            <div id="baselineStatusText" class="baseline-copy">Learning normal activity...</div>
+            <div class="baseline-metrics">
+              <div><span>Processes</span><strong id="knownProcesses">0</strong></div>
+              <div><span>Endpoints</span><strong id="knownEndpoints">0</strong></div>
+              <div><span>Domains</span><strong id="knownDomains">0</strong></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel anomaly-card">
+          <div class="panel-head">
+            <div><div class="panel-kicker">ANOMALY ENGINE</div><div class="panel-title">Recent behavior signals</div></div>
+            <span id="anomalyBadge" class="pill neutral">0 open</span>
+          </div>
+          <div id="anomalyFeed" class="anomaly-feed"><div class="empty">No anomalies yet</div></div>
+        </article>
+      </section>
+
+      <section class="section two-col equal intelligence-tables">
+        <article class="panel">
+          <div class="panel-head">
+            <div><div class="panel-kicker">DNS VISIBILITY</div><div class="panel-title">Observed DNS cache</div></div>
+            <span id="dnsPill" class="pill neutral">checking</span>
+          </div>
+          <div class="table-wrap intelligence-table">
+            <table>
+              <thead><tr><th>Domain</th><th>Type</th><th>Data</th><th>Seen</th><th>Last seen</th></tr></thead>
+              <tbody id="dnsTable"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div><div class="panel-kicker">COMMUNICATION HISTORY</div><div class="panel-title">External endpoints</div></div>
+            <span id="commBadge" class="pill neutral">0 learned</span>
+          </div>
+          <div class="table-wrap intelligence-table">
+            <table>
+              <thead><tr><th>Process</th><th>Proto</th><th>Remote</th><th>Seen</th><th>Last seen</th></tr></thead>
+              <tbody id="communicationsTable"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
 
       <section id="network" class="section two-col wide-left">
         <article class="panel">
           <div class="panel-head">
-            <div>
-              <div class="panel-kicker">TOPOLOGY</div>
-              <div class="panel-title">Local network map</div>
-            </div>
+            <div><div class="panel-kicker">TOPOLOGY</div><div class="panel-title">Local network map</div></div>
             <div class="panel-actions"><span id="mapSummary" class="muted">waiting...</span></div>
           </div>
-          <div class="map-wrap">
-            <svg id="networkMap" viewBox="0 0 920 430" preserveAspectRatio="xMidYMid meet"></svg>
-          </div>
+          <div class="map-wrap"><svg id="networkMap" viewBox="0 0 920 430" preserveAspectRatio="xMidYMid meet"></svg></div>
         </article>
 
         <article class="panel network-card">
-          <div class="panel-head">
-            <div>
-              <div class="panel-kicker">NETWORK</div>
-              <div class="panel-title">Interface details</div>
-            </div>
-          </div>
+          <div class="panel-head"><div><div class="panel-kicker">NETWORK</div><div class="panel-title">Interface details</div></div></div>
           <div id="networkInfo" class="kv-list"><div class="empty">Discovering network...</div></div>
         </article>
       </section>
@@ -139,11 +186,12 @@
             <button class="chip active" data-device-filter="all">All</button>
             <button class="chip" data-device-filter="online">Online</button>
             <button class="chip" data-device-filter="untrusted">Needs trust</button>
+            <button class="chip" data-device-filter="risk">Risk ≥ medium</button>
           </div>
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Status</th><th>Device</th><th>IP</th><th>MAC</th><th>Vendor</th><th>Trust</th><th>Last seen</th></tr></thead>
+            <thead><tr><th>Status</th><th>Device</th><th>IP</th><th>MAC</th><th>Vendor</th><th>Risk</th><th>Trust</th><th>Last seen</th></tr></thead>
             <tbody id="devicesTable"></tbody>
           </table>
         </div>
@@ -152,16 +200,12 @@
       <section id="connections" class="section two-col equal">
         <article class="panel">
           <div class="panel-head"><div><div class="panel-kicker">HOST</div><div class="panel-title">Listening ports</div></div><span id="listenerBadge" class="pill neutral">0</span></div>
-          <div class="table-wrap short">
-            <table><thead><tr><th>Proto</th><th>Bind</th><th>Port</th><th>Process</th></tr></thead><tbody id="listenersTable"></tbody></table>
-          </div>
+          <div class="table-wrap short"><table><thead><tr><th>Proto</th><th>Bind</th><th>Port</th><th>Process</th></tr></thead><tbody id="listenersTable"></tbody></table></div>
         </article>
 
         <article class="panel">
           <div class="panel-head"><div><div class="panel-kicker">SOCKETS</div><div class="panel-title">Active connections</div></div><span id="connectionBadge" class="pill neutral">0</span></div>
-          <div class="table-wrap short">
-            <table><thead><tr><th>Proto</th><th>Local</th><th>Remote</th><th>Status</th><th>Process</th></tr></thead><tbody id="connectionsTable"></tbody></table>
-          </div>
+          <div class="table-wrap short"><table><thead><tr><th>Proto</th><th>Local</th><th>Remote</th><th>Status</th><th>Process</th></tr></thead><tbody id="connectionsTable"></tbody></table></div>
         </article>
       </section>
 
@@ -172,6 +216,7 @@
             <button class="chip active" data-alert-filter="open">Open</button>
             <button class="chip" data-alert-filter="all">All</button>
             <button class="chip" data-alert-filter="high">High</button>
+            <button class="chip" data-alert-filter="anomaly">Anomalies</button>
           </div>
         </div>
         <div class="table-wrap">
@@ -179,7 +224,7 @@
         </div>
       </section>
 
-      <footer>Network Sentinel runs locally. Monitor only systems and networks you own or are authorized to administer.</footer>
+      <footer>Network Sentinel runs locally. Watchtower learns behavior from local observations only. Monitor only systems and networks you own or are authorized to administer.</footer>
     </main>
   </div>
 
