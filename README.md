@@ -1,33 +1,42 @@
-# Network Sentinel
+# Network Sentinel v0.6.0 — Fleet
 
-Network Sentinel is a local defensive monitoring dashboard for your own computer and LAN.
+Network Sentinel is a defensive, local-first network monitor for computers and private LANs you own or are explicitly authorized to administer.
 
-> Use it only on systems and networks that you own or are explicitly authorized to monitor.
+v0.6 **Fleet** extends the v0.5 Investigator build with agentless monitoring of every device Sentinel discovers on the directly connected private IPv4 LAN.
 
-## v0.4.0 — Watchtower
+## What Fleet adds
 
-Watchtower adds a behavioral intelligence layer on top of the Pulse dashboard.
+- Continuous health probes for all discovered private-LAN devices.
+- ICMP reachability with TCP fallback for devices that ignore ping.
+- Small configurable TCP service-exposure inventory; no banner grabbing and no authentication attempts.
+- Per-device reachability history and latency samples.
+- Alerts when a known device goes offline or returns online.
+- Alerts when a previously unseen monitored TCP service appears.
+- Device detail drawer with:
+  - identity and vendor;
+  - trust state;
+  - risk heuristic;
+  - probe state and latency;
+  - currently observed LAN services;
+  - reachability history;
+  - packet-sensor traffic counters when available.
+- Fleet summary showing known, probed, reachable and unreachable devices.
+- Manual probe of one device or the entire known fleet.
+- Packet-capture attribution to known LAN IPs when the optional sensor can see those frames.
 
-### New in v0.4
+Everything from earlier versions remains available: active LAN discovery, topology, host socket monitoring, behavior baseline, DNS visibility, packet metadata capture, flow aggregation, anomaly detection, incident correlation and the Investigator timeline.
 
-- **Behavior baseline**: Sentinel learns processes, external endpoints and DNS names during a configurable warm-up period.
-- **Communication history**: external connections are aggregated locally by process, protocol, remote IP and port.
-- **Anomaly detection** for:
-  - a process that starts making external network connections for the first time after the baseline is ready;
-  - unusually high destination fan-out;
-  - many previously unseen remote endpoints appearing in one cycle;
-  - bursts of previously unseen DNS names;
-  - newly observed punycode/IDN domains as a low-severity review signal.
-- **DNS visibility**: on Windows, Sentinel reads the local DNS client cache through PowerShell `Get-DnsClientCache`. Other platforms are best-effort and clearly report when cache visibility is unavailable.
-- **Per-device risk heuristic**: each device gets an explainable local score based on trust state, age, MAC characteristics and missing identity data.
-- **Intelligence UI**: baseline progress, anomaly feed, DNS observations and learned communication endpoints.
-- **History retention**: aggregated DNS/endpoint history is pruned automatically.
+## Important visibility limitation
 
-All risk and Sentinel scores are explicitly heuristics. They are not probabilities of compromise and do not replace an IDS/EDR.
+Fleet can **monitor** discovered devices, but it does not remotely take control of them.
+
+On ordinary switched Ethernet/Wi-Fi, your PC cannot automatically see every unicast packet exchanged by other devices. Therefore per-device traffic counters include only frames visible to the Sentinel sensor. Full-LAN traffic visibility normally requires router telemetry, a mirror/SPAN port, a supported gateway integration, or a dedicated sensor placed where the traffic actually passes.
+
+Likewise, a device can be online while blocking ICMP and the monitored TCP ports. Fleet uses a TCP fallback to reduce false offline states, but no agentless probe can guarantee perfect liveness detection for every firewall policy.
 
 ## Windows quick start
 
-From PowerShell inside the repository:
+From PowerShell in the repository directory:
 
 ```powershell
 .\scripts\bootstrap.cmd
@@ -40,106 +49,103 @@ Open:
 http://127.0.0.1:8765
 ```
 
-FastAPI docs:
+API documentation:
 
 ```text
 http://127.0.0.1:8765/docs
 ```
 
-## Upgrade from v0.3 with Git
+## Optional packet metadata sensor
 
-Stop Sentinel with `CTRL+C`, then:
+The core Fleet monitor does not require packet capture.
+
+To enable the optional metadata sensor on Windows:
+
+```powershell
+.\scripts\enable-capture.cmd
+```
+
+Install Npcap, then start with:
+
+```powershell
+.\scripts\run-capture.cmd
+```
+
+Packet payloads are not persisted by Sentinel. The sensor aggregates metadata such as IPs, ports, protocol, packet count and byte count.
+
+## Fleet configuration
+
+Defaults:
+
+```text
+SENTINEL_DEVICE_MONITORING=1
+SENTINEL_DEVICE_PROBE_INTERVAL=45
+SENTINEL_DEVICE_PROBE_TIMEOUT_MS=250
+SENTINEL_DEVICE_PROBE_WORKERS=8
+SENTINEL_DEVICE_SERVICE_PORTS=21,22,23,53,80,139,443,445,554,631,1883,3389,5357,5900,8008,8080,8443,8883,9100
+```
+
+Example: probe every 90 seconds and only inventory a few common services:
+
+```powershell
+$env:SENTINEL_DEVICE_PROBE_INTERVAL="90"
+$env:SENTINEL_DEVICE_SERVICE_PORTS="22,80,443,445,3389"
+.\scripts\run.cmd
+```
+
+The service check is deliberately limited to a configured allow-list. Fleet performs ordinary TCP connects only; it does not brute-force credentials, exploit services or pull private data from devices.
+
+## Fleet API
+
+```text
+GET  /api/fleet
+POST /api/fleet/scan
+
+GET  /api/devices
+GET  /api/devices/{ip}/profile
+GET  /api/devices/{ip}/history
+GET  /api/devices/{ip}/services
+GET  /api/devices/{ip}/traffic
+POST /api/devices/{ip}/probe
+POST /api/devices/{ip}/trust
+```
+
+Existing Investigator endpoints remain available, including `/api/flows`, `/api/timeline`, `/api/incidents`, `/api/dns`, `/api/communications`, `/api/anomalies` and `/api/capture`.
+
+## Upgrade from v0.5
+
+Stop Sentinel, back up the database, then apply the v0.5 → v0.6 patch or copy the overlay files.
+
+```powershell
+Copy-Item sentinel.db sentinel-v05-backup.db
+```
+
+After the source update:
+
+```powershell
+.\scripts\bootstrap.cmd
+.\scripts\run.cmd
+```
+
+The SQLite schema is extended automatically; the existing database is kept.
+
+## Git workflow
+
+Once the updated source is in your local checkout:
+
+```powershell
+git status
+git add .
+git commit -m "Release Network Sentinel v0.6.0 Fleet"
+git push origin main
+```
+
+Future remote updates can still be pulled with:
 
 ```powershell
 .\scripts\update.cmd
-.\scripts\run.cmd
 ```
 
-The existing `sentinel.db` is migrated automatically. Watchtower creates new local tables for DNS records, communication history and process baselines without deleting previous devices or alerts.
+## Safety model
 
-## Configuration
-
-```text
-SENTINEL_HOST=127.0.0.1
-SENTINEL_PORT=8765
-SENTINEL_INTERVAL=2
-SENTINEL_DB=sentinel.db
-SENTINEL_CONN_SPIKE=80
-
-SENTINEL_ACTIVE_DISCOVERY=1
-SENTINEL_DISCOVERY_INTERVAL=60
-SENTINEL_MAX_DISCOVERY_HOSTS=254
-SENTINEL_PING_TIMEOUT_MS=350
-SENTINEL_DEVICE_ONLINE_WINDOW=130
-
-SENTINEL_DNS_MONITORING=1
-SENTINEL_DNS_INTERVAL=10
-SENTINEL_DNS_BURST_THRESHOLD=25
-SENTINEL_BASELINE_WARMUP=120
-SENTINEL_PROCESS_FANOUT=25
-SENTINEL_ENDPOINT_CHURN=12
-SENTINEL_HISTORY_RETENTION_DAYS=7
-```
-
-For a longer learning phase:
-
-```powershell
-$env:SENTINEL_BASELINE_WARMUP="600"
-.\scripts\run.cmd
-```
-
-To disable DNS cache monitoring:
-
-```powershell
-$env:SENTINEL_DNS_MONITORING="0"
-.\scripts\run.cmd
-```
-
-## What the baseline means
-
-For the first `SENTINEL_BASELINE_WARMUP` seconds, Sentinel records normal observations without generating the new-process, endpoint-churn or DNS-burst anomaly alerts. Once learning is complete, previously unseen behavior can generate review signals.
-
-A short baseline is convenient for development. For long-running home or lab monitoring, 5–15 minutes is more useful than the 120-second default.
-
-## API
-
-```text
-GET  /api/status
-GET  /api/overview
-GET  /api/baseline
-GET  /api/network
-GET  /api/devices
-POST /api/devices/{ip}/trust?trusted=true
-GET  /api/listeners
-GET  /api/connections
-GET  /api/traffic
-GET  /api/dns
-GET  /api/communications
-GET  /api/anomalies
-GET  /api/alerts
-POST /api/alerts/{id}/ack
-POST /api/alerts/ack-all
-POST /api/discovery/scan
-```
-
-## Scope and safety boundary
-
-Network Sentinel is defensive monitoring software. Active LAN discovery remains deliberately constrained to the directly connected private IPv4 network and at most 254 addresses. Watchtower does not add exploitation, credential attacks, stealth scanning, traffic interception or offensive automation.
-
-DNS visibility reads the local host's cache; it is not a packet sniffer and therefore does not claim to see every DNS request made by every device on the LAN.
-
-Communication history describes the computer running Sentinel. Per-device traffic attribution still requires an authorized router sensor or packet-capture component and is not claimed in v0.4.
-
-## Repository workflow
-
-Keep `main` stable and develop releases on branches:
-
-```powershell
-git switch -c feature/my-feature
-# edit / test
-git add .
-git commit -m "Add my feature"
-git push -u origin feature/my-feature
-```
-
-Then merge through a pull request.
+Network Sentinel is intentionally defensive. Use active discovery and device probing only on networks you own or are authorized to administer. Fleet does not include deauthentication, ARP spoofing, credential attacks, exploitation or covert remote-control functionality.

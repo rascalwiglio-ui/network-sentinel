@@ -31,11 +31,38 @@ class RuntimeState:
             "baseline_remaining": None,
             "intelligence_running": False,
             "last_intelligence": None,
+            "capture_enabled": False,
+            "capture_running": False,
+            "capture_available": None,
+            "capture_error": None,
+            "capture_interface": None,
+            "capture_packets": 0,
+            "capture_bytes": 0,
+            "capture_dns_events": 0,
+            "last_capture": None,
+            "last_correlation": None,
+            "fleet_enabled": False,
+            "fleet_running": False,
+            "last_fleet_scan": None,
+            "fleet_error": None,
+            "fleet_targets": 0,
+            "fleet_reachable": 0,
+            "fleet_services": 0,
+            "fleet_probe_interval": None,
+            "fleet_last_duration_ms": None,
+            "fleet_manual_queue": 0,
         }
 
     def update(self, **kwargs):
         with self.lock:
             self.data.update(kwargs)
+
+    def increment_capture(self, packets=0, bytes_count=0, dns_events=0):
+        with self.lock:
+            self.data["capture_packets"] += packets
+            self.data["capture_bytes"] += bytes_count
+            self.data["capture_dns_events"] += dns_events
+            self.data["last_capture"] = time.time()
 
     def add_traffic(self, point):
         with self.lock:

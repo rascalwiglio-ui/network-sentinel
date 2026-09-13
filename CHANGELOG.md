@@ -1,58 +1,46 @@
 # Changelog
 
-## 0.4.0 - Watchtower
+## 0.6.0 — Fleet
 
-- Added a local behavior-baseline engine with a configurable learning warm-up.
-- Added external communication history aggregated by process, protocol, remote IP and port.
-- Added anomaly detection for new network-active processes after baseline learning.
-- Added anomaly detection for unusually high destination fan-out and endpoint churn.
-- Added best-effort DNS cache visibility, with first-class Windows support through `Get-DnsClientCache`.
-- Added DNS burst detection and low-severity visibility for newly observed punycode/IDN domains.
-- Added explainable per-device risk heuristics with reasons shown in the UI.
-- Added `/api/baseline`, `/api/dns`, `/api/communications` and `/api/anomalies` endpoints.
-- Added local history retention and periodic pruning for DNS and communication telemetry.
-- Expanded the dashboard with a dedicated Intelligence area, baseline progress, anomaly feed, DNS table and external endpoint history.
-- Expanded global search to domains and learned communications.
-- Added device filtering by risk level and anomaly-specific alert filtering.
-- Improved topology highlighting for medium/high-risk devices.
-- Existing SQLite databases migrate in place; no reset is required.
+- Added agentless health monitoring for every discovered private-LAN device.
+- Added ICMP reachability with a limited TCP fallback.
+- Added configurable common-service exposure inventory without banner grabbing.
+- Added per-device probe history, latency samples and active service tracking.
+- Added device online/offline and new-service change alerts.
+- Added optional packet-sensor byte/packet attribution to known LAN devices.
+- Added Fleet summary and device inspector UI.
+- Added manual probe for one device or the full known fleet.
+- Added `/api/fleet` and per-device profile/history/services/traffic APIs.
+- Extended risk heuristics with monitored service exposure.
+- Preserved v0.5 Investigator features and database migration compatibility.
 
-## 0.3.0 - Pulse
+## 0.5.0 — Investigator
 
-- Completely redesigned responsive dashboard with persistent sidebar.
-- New Sentinel Score: a transparent attention heuristic based on open alerts and untrusted online devices.
-- Trusted-device workflow with one-click trust/untrust actions.
-- New overview API with device, connection, listener and alert summaries.
-- New activity feed for recent open alerts.
-- Global search across devices, listeners, connections and alerts.
-- Filters for device state and alert state/severity.
-- Improved topology visualization and device labels.
-- Refined realtime bandwidth chart.
-- Acknowledge-all action for alerts.
-- Static UI split into HTML, CSS and JavaScript for easier maintenance.
-- Automatic SQLite migration adds the `trusted` field without resetting existing data.
+- Optional metadata-only packet capture sensor using Scapy.
+- Windows helper scripts for installing the optional capture dependency and launching capture mode.
+- Packet capture remains disabled by default and never stores packet payload bytes.
+- Aggregated network-flow table with direction, process, endpoint, packet and byte counts.
+- Best-effort process attribution by correlating captured flows with local psutil sockets.
+- Wire DNS visibility for traditional DNS traffic when capture is enabled.
+- Security event timeline combining anomalies, alerts, new flows and DNS observations.
+- Incident correlation engine that groups related signals by process, IP or domain.
+- Incident scoring, severity and close workflow.
+- New Investigator dashboard panels for incidents, sensor health, live flows and timeline.
+- Sentinel Score now also accounts for open correlated incidents.
+- New APIs: `/api/flows`, `/api/timeline`, `/api/incidents`, `/api/capture`.
+- New unit tests for flow aggregation, process matching and incident correlation.
 
-## 0.2.0
+## 0.4.0 — Watchtower
 
-- Active LAN discovery on private IPv4 networks.
-- Discovery capped at 254 hosts for safety and predictability.
-- Reverse-DNS hostname resolution.
-- Offline MAC vendor lookup.
-- Default gateway detection.
-- Device online/offline state.
-- MAC-change alerts.
-- Realtime RX/TX throughput.
-- Traffic history endpoint and graph.
-- Interactive network topology map.
-- Manual "Scan now" action.
-- Safer SQLite schema migration from v0.1.
-- GitHub CI workflow.
-- PowerShell/Linux bootstrap, run and update scripts.
+- Behavior baseline and communication history.
+- DNS cache monitoring.
+- Explainable per-device risk scores.
+- Behavioral anomaly detection.
+- Intelligence dashboard.
 
-## 0.1.0
+## 0.3.0 — Pulse
 
-- Initial dashboard.
-- ARP inventory.
-- Local listeners and active connections.
-- SQLite event history.
-- New-device/new-listener/connection-spike alerts.
+- Redesigned security-console UI.
+- Trust state for devices.
+- Search and filters.
+- Attention score.

@@ -21,7 +21,9 @@
       <nav class="nav">
         <a class="nav-link active" href="#overview"><span>◈</span> Overview</a>
         <a class="nav-link" href="#intelligence"><span>⌁</span> Intelligence</a>
+        <a class="nav-link" href="#incidents"><span>◆</span> Incidents</a>
         <a class="nav-link" href="#network"><span>⌘</span> Network</a>
+        <a class="nav-link" href="#fleet"><span>◫</span> Fleet</a>
         <a class="nav-link" href="#devices"><span>▦</span> Devices</a>
         <a class="nav-link" href="#connections"><span>⇄</span> Connections</a>
         <a class="nav-link" href="#alerts"><span>△</span> Alerts</a>
@@ -29,7 +31,7 @@
 
       <div class="sidebar-footer">
         <div class="mini-status"><span id="sideDot" class="status-dot"></span><span id="sideStatus">Connecting</span></div>
-        <div class="version">v0.4.0 · Watchtower</div>
+        <div class="version">v0.6.0 · Fleet</div>
       </div>
     </aside>
 
@@ -37,7 +39,7 @@
       <header class="topbar">
         <div>
           <div class="eyebrow">LOCAL SECURITY CONSOLE</div>
-          <h1>Watchtower</h1>
+          <h1>Fleet</h1>
         </div>
         <div class="top-actions">
           <div class="search-wrap">
@@ -83,13 +85,15 @@
         </article>
       </section>
 
-      <section class="stat-grid stat-grid-six">
+      <section class="stat-grid stat-grid-eight">
         <article class="stat-card"><span class="stat-icon cyan">◉</span><div><span>Online devices</span><strong id="devicesOnline">—</strong><small id="devicesMeta">—</small></div></article>
         <article class="stat-card"><span class="stat-icon blue">⇄</span><div><span>Connections</span><strong id="connectionsCount">—</strong><small>current host sockets</small></div></article>
         <article class="stat-card"><span class="stat-icon amber">◎</span><div><span>Listening ports</span><strong id="listenersCount">—</strong><small>TCP / UDP</small></div></article>
         <article class="stat-card"><span class="stat-icon red">△</span><div><span>Open alerts</span><strong id="alertsCount">—</strong><small id="alertsMeta">—</small></div></article>
         <article class="stat-card"><span class="stat-icon violet">⌁</span><div><span>Anomalies</span><strong id="anomaliesCount">—</strong><small>behavior signals</small></div></article>
         <article class="stat-card"><span class="stat-icon green">DNS</span><div><span>Known domains</span><strong id="domainsCount">—</strong><small id="baselineMeta">baseline</small></div></article>
+        <article class="stat-card"><span class="stat-icon red">◆</span><div><span>Open incidents</span><strong id="incidentsCount">—</strong><small>correlated signals</small></div></article>
+        <article class="stat-card"><span class="stat-icon cyan">◌</span><div><span>Capture</span><strong id="captureState">—</strong><small id="captureMeta">optional sensor</small></div></article>
       </section>
 
       <section id="intelligence" class="section intel-summary-grid">
@@ -105,6 +109,7 @@
               <div><span>Processes</span><strong id="knownProcesses">0</strong></div>
               <div><span>Endpoints</span><strong id="knownEndpoints">0</strong></div>
               <div><span>Domains</span><strong id="knownDomains">0</strong></div>
+              <div><span>Flows</span><strong id="knownFlows">0</strong></div>
             </div>
           </div>
         </article>
@@ -144,6 +149,83 @@
             </table>
           </div>
         </article>
+      </section>
+
+      <section id="incidents" class="section two-col wide-left investigation-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <div><div class="panel-kicker">CORRELATION ENGINE</div><div class="panel-title">Incident queue</div></div>
+            <span id="incidentBadge" class="pill neutral">0 open</span>
+          </div>
+          <div id="incidentFeed" class="incident-feed"><div class="empty">No correlated incidents</div></div>
+        </article>
+
+        <article class="panel capture-card">
+          <div class="panel-head">
+            <div><div class="panel-kicker">OPTIONAL SENSOR</div><div class="panel-title">Packet metadata capture</div></div>
+            <span id="capturePill" class="pill neutral">checking</span>
+          </div>
+          <div class="capture-body">
+            <div class="capture-radar"><span id="capturePulse"></span><b id="capturePackets">0</b><small>packets</small></div>
+            <div class="capture-copy">
+              <strong id="captureTitle">Capture disabled</strong>
+              <p id="captureDescription">Core monitoring remains active without packet capture.</p>
+              <div class="mini-kv"><span>Bytes</span><b id="captureBytes">0 B</b></div>
+              <div class="mini-kv"><span>Wire DNS</span><b id="captureDns">0</b></div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="section two-col equal investigation-tables">
+        <article class="panel">
+          <div class="panel-head">
+            <div><div class="panel-kicker">FLOW SENSOR</div><div class="panel-title">Observed network flows</div></div>
+            <span id="flowBadge" class="pill neutral">0</span>
+          </div>
+          <div class="table-wrap intelligence-table">
+            <table>
+              <thead><tr><th>Direction</th><th>Process</th><th>Proto</th><th>Remote</th><th>Packets</th><th>Bytes</th></tr></thead>
+              <tbody id="flowsTable"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div><div class="panel-kicker">INVESTIGATION</div><div class="panel-title">Security timeline</div></div>
+            <span id="timelineBadge" class="pill neutral">0 events</span>
+          </div>
+          <div id="timelineFeed" class="timeline-feed"><div class="empty">No timeline events</div></div>
+        </article>
+      </section>
+
+      <section id="fleet" class="section panel fleet-panel">
+        <div class="panel-head table-head">
+          <div><div class="panel-kicker">LAN-WIDE DEVICE WATCH</div><div class="panel-title">Fleet monitor</div></div>
+          <div class="panel-actions fleet-actions">
+            <span id="fleetStatus" class="pill neutral">waiting</span>
+            <button id="fleetScanBtn" class="btn btn-ghost small" type="button">Probe all devices</button>
+          </div>
+        </div>
+        <div class="fleet-summary">
+          <div><span>Known</span><strong id="fleetKnown">0</strong></div>
+          <div><span>Probed</span><strong id="fleetMonitored">0</strong></div>
+          <div><span>Reachable</span><strong id="fleetReachable">0</strong></div>
+          <div><span>Unreachable</span><strong id="fleetUnreachable">0</strong></div>
+          <div><span>Open services</span><strong id="fleetServices">0</strong></div>
+          <div><span>Traffic seen</span><strong id="fleetTrafficSeen">0</strong></div>
+        </div>
+        <div class="fleet-note">
+          Agentless monitoring uses LAN discovery, ICMP/TCP reachability and a small configurable service-port allow-list.
+          Traffic counters include only packets visible to this sensor; a normal switched Wi-Fi/Ethernet network does not expose every device's unicast traffic to your PC.
+        </div>
+        <div class="table-wrap fleet-table-wrap">
+          <table>
+            <thead><tr><th>Device</th><th>Probe</th><th>Latency</th><th>Services</th><th>Traffic observed</th><th>Last probe</th><th></th></tr></thead>
+            <tbody id="fleetTable"></tbody>
+          </table>
+        </div>
       </section>
 
       <section id="network" class="section two-col wide-left">
@@ -191,7 +273,7 @@
         </div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Status</th><th>Device</th><th>IP</th><th>MAC</th><th>Vendor</th><th>Risk</th><th>Trust</th><th>Last seen</th></tr></thead>
+            <thead><tr><th>Status</th><th>Device</th><th>IP</th><th>MAC</th><th>Vendor</th><th>Risk</th><th>Probe</th><th>Services</th><th>Trust</th><th>Last seen</th><th></th></tr></thead>
             <tbody id="devicesTable"></tbody>
           </table>
         </div>
@@ -224,9 +306,18 @@
         </div>
       </section>
 
-      <footer>Network Sentinel runs locally. Watchtower learns behavior from local observations only. Monitor only systems and networks you own or are authorized to administer.</footer>
+      <footer>Network Sentinel runs locally. Fleet adds agentless monitoring of discovered private-LAN devices; it does not remotely take control of them. Monitor only systems and networks you own or are authorized to administer.</footer>
     </main>
   </div>
+
+  <div id="deviceDrawerBackdrop" class="drawer-backdrop" onclick="closeDeviceDrawer()"></div>
+  <aside id="deviceDrawer" class="device-drawer" aria-hidden="true">
+    <div class="drawer-head">
+      <div><div class="panel-kicker">DEVICE INSPECTOR</div><h2 id="drawerTitle">Device</h2><div id="drawerSubtitle" class="muted">—</div></div>
+      <button class="drawer-close" type="button" onclick="closeDeviceDrawer()">×</button>
+    </div>
+    <div id="drawerBody" class="drawer-body"><div class="empty">Select a device</div></div>
+  </aside>
 
   <div id="toast" class="toast"></div>
   <script src="/static/app.js"></script>

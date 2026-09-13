@@ -1,0 +1,1548 @@
+diff --git a/.env.example b/.env.example
+index 8fc1f23..c62e7e1 100644
+--- a/.env.example
++++ b/.env.example
+@@ -10,6 +10,13 @@ SENTINEL_MAX_DISCOVERY_HOSTS=254
+ SENTINEL_PING_TIMEOUT_MS=350
+ SENTINEL_DEVICE_ONLINE_WINDOW=130
+ 
++# v0.6 agentless device fleet monitoring. Private LAN only.
++SENTINEL_DEVICE_MONITORING=1
++SENTINEL_DEVICE_PROBE_INTERVAL=45
++SENTINEL_DEVICE_PROBE_TIMEOUT_MS=250
++SENTINEL_DEVICE_PROBE_WORKERS=8
++SENTINEL_DEVICE_SERVICE_PORTS=21,22,23,53,80,139,443,445,554,631,1883,3389,5357,5900,8008,8080,8443,8883,9100
++
+ SENTINEL_DNS_MONITORING=1
+ SENTINEL_DNS_INTERVAL=10
+ SENTINEL_DNS_BURST_THRESHOLD=25
+@@ -18,7 +25,7 @@ SENTINEL_PROCESS_FANOUT=25
+ SENTINEL_ENDPOINT_CHURN=12
+ SENTINEL_HISTORY_RETENTION_DAYS=7
+ 
+-# v0.5 optional packet metadata sensor. Disabled by default.
++# v0.5+ optional packet metadata sensor. Disabled by default.
+ SENTINEL_PACKET_CAPTURE=0
+ SENTINEL_CAPTURE_INTERFACE=
+ SENTINEL_CAPTURE_BPF=ip
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 3177c1d..5a52aea 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,19 @@
+ # Changelog
+ 
++## 0.6.0 — Fleet
++
++- Added agentless health monitoring for every discovered private-LAN device.
++- Added ICMP reachability with a limited TCP fallback.
++- Added configurable common-service exposure inventory without banner grabbing.
++- Added per-device probe history, latency samples and active service tracking.
++- Added device online/offline and new-service change alerts.
++- Added optional packet-sensor byte/packet attribution to known LAN devices.
++- Added Fleet summary and device inspector UI.
++- Added manual probe for one device or the full known fleet.
++- Added `/api/fleet` and per-device profile/history/services/traffic APIs.
++- Extended risk heuristics with monitored service exposure.
++- Preserved v0.5 Investigator features and database migration compatibility.
++
+ ## 0.5.0 — Investigator
+ 
+ - Optional metadata-only packet capture sensor using Scapy.
+diff --git a/README.md b/README.md
+index ee6e9e5..e12629b 100644
+--- a/README.md
++++ b/README.md
+@@ -1,25 +1,42 @@
+-# Network Sentinel v0.5 — Investigator
++# Network Sentinel v0.6.0 — Fleet
+ 
+-Network Sentinel is a defensive, local-first network and host monitoring project.
+-Use it only on systems and networks you own or are explicitly authorized to administer.
++Network Sentinel is a defensive, local-first network monitor for computers and private LANs you own or are explicitly authorized to administer.
+ 
+-## What v0.5 adds
++v0.6 **Fleet** extends the v0.5 Investigator build with agentless monitoring of every device Sentinel discovers on the directly connected private IPv4 LAN.
+ 
+-Investigator builds on Watchtower's baseline/anomaly engine with an investigation layer:
++## What Fleet adds
+ 
+-- optional packet **metadata** sensor;
+-- aggregated flow statistics;
+-- best-effort process attribution;
+-- traditional DNS visibility from observed packets;
+-- unified security timeline;
+-- correlated incidents with explainable scores;
+-- redesigned investigation panels in the web console.
++- Continuous health probes for all discovered private-LAN devices.
++- ICMP reachability with TCP fallback for devices that ignore ping.
++- Small configurable TCP service-exposure inventory; no banner grabbing and no authentication attempts.
++- Per-device reachability history and latency samples.
++- Alerts when a known device goes offline or returns online.
++- Alerts when a previously unseen monitored TCP service appears.
++- Device detail drawer with:
++  - identity and vendor;
++  - trust state;
++  - risk heuristic;
++  - probe state and latency;
++  - currently observed LAN services;
++  - reachability history;
++  - packet-sensor traffic counters when available.
++- Fleet summary showing known, probed, reachable and unreachable devices.
++- Manual probe of one device or the entire known fleet.
++- Packet-capture attribution to known LAN IPs when the optional sensor can see those frames.
+ 
+-The packet sensor stores metadata such as addresses, ports, protocol, direction and byte counts. **Packet payloads are not stored.**
++Everything from earlier versions remains available: active LAN discovery, topology, host socket monitoring, behavior baseline, DNS visibility, packet metadata capture, flow aggregation, anomaly detection, incident correlation and the Investigator timeline.
+ 
+-## Normal start
++## Important visibility limitation
+ 
+-Windows:
++Fleet can **monitor** discovered devices, but it does not remotely take control of them.
++
++On ordinary switched Ethernet/Wi-Fi, your PC cannot automatically see every unicast packet exchanged by other devices. Therefore per-device traffic counters include only frames visible to the Sentinel sensor. Full-LAN traffic visibility normally requires router telemetry, a mirror/SPAN port, a supported gateway integration, or a dedicated sensor placed where the traffic actually passes.
++
++Likewise, a device can be online while blocking ICMP and the monitored TCP ports. Fleet uses a TCP fallback to reduce false offline states, but no agentless probe can guarantee perfect liveness detection for every firewall policy.
++
++## Windows quick start
++
++From PowerShell in the repository directory:
+ 
+ ```powershell
+ .\scripts\bootstrap.cmd
+@@ -32,113 +49,103 @@ Open:
+ http://127.0.0.1:8765
+ ```
+ 
+-Core monitoring, LAN discovery, socket telemetry, baseline learning and DNS-cache telemetry work without packet capture.
++API documentation:
++
++```text
++http://127.0.0.1:8765/docs
++```
+ 
+-## Optional packet capture on Windows
++## Optional packet metadata sensor
+ 
+-First install the optional Python dependency:
++The core Fleet monitor does not require packet capture.
++
++To enable the optional metadata sensor on Windows:
+ 
+ ```powershell
+ .\scripts\enable-capture.cmd
+ ```
+ 
+-Live capture on Windows also requires **Npcap**. Install Npcap from its official site, then start Sentinel with:
++Install Npcap, then start with:
+ 
+ ```powershell
+ .\scripts\run-capture.cmd
+ ```
+ 
+-If capture cannot start, the dashboard shows the reason while the rest of Sentinel continues to function.
+-
+-## Optional packet capture on Linux
+-
+-Install the optional dependency:
++Packet payloads are not persisted by Sentinel. The sensor aggregates metadata such as IPs, ports, protocol, packet count and byte count.
+ 
+-```bash
+-.venv/bin/python -m pip install -r requirements-capture.txt
+-```
+-
+-Then run with appropriate packet-capture privileges:
++## Fleet configuration
+ 
+-```bash
+-SENTINEL_PACKET_CAPTURE=1 ./scripts/run.sh
+-```
+-
+-Prefer granting only the permissions needed for capture rather than running unrelated software as root.
+-
+-## Capture limits
+-
+-- Sentinel only stores packet metadata, not payload contents.
+-- Process attribution is best-effort and works best for traffic generated by the host running Sentinel.
+-- A switched LAN normally does not expose every other device's unicast traffic to one ordinary endpoint.
+-- Encrypted DNS such as DoH/DoT cannot be decoded as classic DNS merely from packet metadata.
+-- Npcap/libpcap and OS permissions determine whether capture is available.
+-
+-## Incident correlation
+-
+-Investigator records local security events and groups related signals within a short time window. For example:
++Defaults:
+ 
+ ```text
+-new flow from process X
+-        +
+-new-process anomaly
+-        +
+-related DNS observation
+-        ↓
+-correlated incident
++SENTINEL_DEVICE_MONITORING=1
++SENTINEL_DEVICE_PROBE_INTERVAL=45
++SENTINEL_DEVICE_PROBE_TIMEOUT_MS=250
++SENTINEL_DEVICE_PROBE_WORKERS=8
++SENTINEL_DEVICE_SERVICE_PORTS=21,22,23,53,80,139,443,445,554,631,1883,3389,5357,5900,8008,8080,8443,8883,9100
+ ```
+ 
+-The incident score is an explainable heuristic, not a probability that a compromise occurred.
+-
+-Environment controls:
++Example: probe every 90 seconds and only inventory a few common services:
+ 
+-```text
+-SENTINEL_INCIDENT_WINDOW=120
+-SENTINEL_INCIDENT_MIN_SCORE=35
++```powershell
++$env:SENTINEL_DEVICE_PROBE_INTERVAL="90"
++$env:SENTINEL_DEVICE_SERVICE_PORTS="22,80,443,445,3389"
++.\scripts\run.cmd
+ ```
+ 
+-## New API endpoints
++The service check is deliberately limited to a configured allow-list. Fleet performs ordinary TCP connects only; it does not brute-force credentials, exploit services or pull private data from devices.
++
++## Fleet API
+ 
+ ```text
+-GET  /api/flows
+-GET  /api/timeline
+-GET  /api/incidents
+-GET  /api/incidents/{id}/events
+-POST /api/incidents/{id}/close
+-GET  /api/capture
++GET  /api/fleet
++POST /api/fleet/scan
++
++GET  /api/devices
++GET  /api/devices/{ip}/profile
++GET  /api/devices/{ip}/history
++GET  /api/devices/{ip}/services
++GET  /api/devices/{ip}/traffic
++POST /api/devices/{ip}/probe
++POST /api/devices/{ip}/trust
+ ```
+ 
+-Existing v0.4 APIs remain available.
++Existing Investigator endpoints remain available, including `/api/flows`, `/api/timeline`, `/api/incidents`, `/api/dns`, `/api/communications`, `/api/anomalies` and `/api/capture`.
+ 
+-## Upgrade from v0.4
++## Upgrade from v0.5
+ 
+-Stop Sentinel and back up the database:
++Stop Sentinel, back up the database, then apply the v0.5 → v0.6 patch or copy the overlay files.
+ 
+ ```powershell
+-Copy-Item sentinel.db sentinel-v04-backup.db
++Copy-Item sentinel.db sentinel-v05-backup.db
+ ```
+ 
+-Overlay the v0.5 patch on the repository, then run:
++After the source update:
+ 
+ ```powershell
+ .\scripts\bootstrap.cmd
+ .\scripts\run.cmd
+ ```
+ 
+-Database migrations are automatic. To enable capture later, run `scripts\enable-capture.cmd` and `scripts\run-capture.cmd`.
++The SQLite schema is extended automatically; the existing database is kept.
+ 
+ ## Git workflow
+ 
+-After testing:
++Once the updated source is in your local checkout:
+ 
+ ```powershell
++git status
+ git add .
+-git commit -m "Release Network Sentinel v0.5.0 Investigator"
++git commit -m "Release Network Sentinel v0.6.0 Fleet"
+ git push origin main
+ ```
+ 
+-Future updates can continue through:
++Future remote updates can still be pulled with:
+ 
+ ```powershell
+ .\scripts\update.cmd
+ ```
++
++## Safety model
++
++Network Sentinel is intentionally defensive. Use active discovery and device probing only on networks you own or are authorized to administer. Fleet does not include deauthentication, ARP spoofing, credential attacks, exploitation or covert remote-control functionality.
+diff --git a/VERSION b/VERSION
+index 8f0916f..a918a2a 100644
+--- a/VERSION
++++ b/VERSION
+@@ -1 +1 @@
+-0.5.0
++0.6.0
+diff --git a/sentinel/__init__.py b/sentinel/__init__.py
+index 3d18726..906d362 100644
+--- a/sentinel/__init__.py
++++ b/sentinel/__init__.py
+@@ -1 +1 @@
+-__version__ = "0.5.0"
++__version__ = "0.6.0"
+diff --git a/sentinel/app.py b/sentinel/app.py
+index 6526916..ae5d4b0 100644
+--- a/sentinel/app.py
++++ b/sentinel/app.py
+@@ -9,10 +9,10 @@ from .config import settings
+ from .intelligence import device_risk
+ from .state import runtime
+ from .storage import Storage
+-from .worker import DiscoveryWorker, IntelligenceWorker, MonitorWorker, PacketCaptureWorker
++from .worker import DiscoveryWorker, FleetWorker, IntelligenceWorker, MonitorWorker, PacketCaptureWorker
+ 
+ 
+-VERSION = "0.5.0"
++VERSION = "0.6.0"
+ BASE_DIR = Path(__file__).resolve().parent
+ STATIC_DIR = BASE_DIR / "static"
+ storage = Storage(settings.db_path)
+@@ -42,6 +42,16 @@ discovery_worker = DiscoveryWorker(
+     active=settings.active_discovery,
+ )
+ 
++fleet_worker = FleetWorker(
++    storage=storage,
++    enabled=settings.device_monitoring,
++    interval=settings.device_probe_interval,
++    timeout_ms=settings.device_probe_timeout_ms,
++    service_ports=settings.device_service_ports,
++    max_workers=settings.device_probe_workers,
++    online_window=settings.device_online_window,
++)
++
+ intelligence_worker = IntelligenceWorker(
+     storage=storage,
+     interval=settings.dns_interval,
+@@ -67,6 +77,8 @@ def startup():
+         monitor_worker.start()
+     if not discovery_worker.is_alive():
+         discovery_worker.start()
++    if not fleet_worker.is_alive():
++        fleet_worker.start()
+     if not intelligence_worker.is_alive():
+         intelligence_worker.start()
+     if not capture_worker.is_alive():
+@@ -77,6 +89,7 @@ def startup():
+ def shutdown():
+     monitor_worker.stop()
+     discovery_worker.stop()
++    fleet_worker.stop()
+     intelligence_worker.stop()
+     capture_worker.stop()
+ 
+@@ -93,12 +106,13 @@ def status():
+     data["active_discovery"] = settings.active_discovery
+     data["dns_monitoring"] = settings.dns_monitoring
+     data["packet_capture_configured"] = settings.packet_capture
++    data["device_monitoring"] = settings.device_monitoring
+     data["version"] = VERSION
+     return data
+ 
+ 
+ def _devices_with_risk():
+-    devices = storage.devices(settings.device_online_window)
++    devices = storage.device_profiles(settings.device_online_window)
+     for device in devices:
+         device["risk"] = device_risk(device)
+     return devices
+@@ -110,6 +124,7 @@ def overview():
+     alerts = storage.alert_counts()
+     state = runtime.snapshot()
+     baseline = storage.baseline_counts()
++    fleet = storage.fleet_summary(settings.device_online_window)
+ 
+     online = [d for d in devices if d["online"]]
+     unknown_online = [d for d in online if not d["trusted"] and not d["is_gateway"]]
+@@ -151,6 +166,12 @@ def overview():
+         "tx_bps": state["tx_bps"],
+         "capture_packets": state["capture_packets"],
+         "capture_bytes": state["capture_bytes"],
++        "fleet_known": fleet["known"],
++        "fleet_monitored": fleet["monitored"],
++        "fleet_reachable": fleet["reachable"],
++        "fleet_unreachable": fleet["unreachable"],
++        "fleet_active_services": fleet["active_services"],
++        "fleet_traffic_seen_recently": fleet["traffic_seen_recently"],
+     }
+ 
+ 
+@@ -164,6 +185,70 @@ def devices():
+     return _devices_with_risk()
+ 
+ 
++@app.get("/api/fleet")
++def fleet():
++    state = runtime.snapshot()
++    summary = storage.fleet_summary(settings.device_online_window)
++    return {
++        **summary,
++        "enabled": settings.device_monitoring,
++        "running": state["fleet_running"],
++        "last_scan": state["last_fleet_scan"],
++        "last_duration_ms": state["fleet_last_duration_ms"],
++        "probe_interval": settings.device_probe_interval,
++        "probe_timeout_ms": settings.device_probe_timeout_ms,
++        "service_ports": [int(x) for x in settings.device_service_ports.split(",") if x.strip().isdigit()],
++        "error": state["fleet_error"],
++        "traffic_visibility": "sensor-observed only; switched LAN traffic may be invisible without router/SPAN telemetry",
++    }
++
++
++@app.post("/api/fleet/scan")
++def fleet_scan():
++    fleet_worker.trigger()
++    return {"ok": True, "queued": True}
++
++
++@app.get("/api/devices/{ip}/profile")
++def device_profile(ip: str):
++    device = storage.device_profile(ip, settings.device_online_window)
++    if device is None:
++        raise HTTPException(status_code=404, detail="Device not found")
++    device["risk"] = device_risk(device)
++    device["services"] = storage.device_services(ip, active_only=False)
++    device["traffic"] = storage.device_traffic(ip)
++    return device
++
++
++@app.get("/api/devices/{ip}/history")
++def device_history(ip: str, limit: int = Query(120, ge=1, le=1000)):
++    if storage.device_profile(ip, settings.device_online_window) is None:
++        raise HTTPException(status_code=404, detail="Device not found")
++    return storage.device_history(ip, limit)
++
++
++@app.get("/api/devices/{ip}/services")
++def device_services(ip: str):
++    if storage.device_profile(ip, settings.device_online_window) is None:
++        raise HTTPException(status_code=404, detail="Device not found")
++    return storage.device_services(ip)
++
++
++@app.get("/api/devices/{ip}/traffic")
++def device_traffic(ip: str):
++    if storage.device_profile(ip, settings.device_online_window) is None:
++        raise HTTPException(status_code=404, detail="Device not found")
++    return storage.device_traffic(ip)
++
++
++@app.post("/api/devices/{ip}/probe")
++def probe_device_now(ip: str):
++    if storage.device_profile(ip, settings.device_online_window) is None:
++        raise HTTPException(status_code=404, detail="Device not found")
++    fleet_worker.trigger(ip)
++    return {"ok": True, "ip": ip, "queued": True}
++
++
+ @app.post("/api/devices/{ip}/trust")
+ def trust_device(ip: str, trusted: bool = True):
+     if not storage.set_device_trusted(ip, trusted):
+diff --git a/sentinel/collectors/device_probe.py b/sentinel/collectors/device_probe.py
+new file mode 100644
+index 0000000..b66058f
+--- /dev/null
++++ b/sentinel/collectors/device_probe.py
+@@ -0,0 +1,189 @@
++from __future__ import annotations
++
++from concurrent.futures import ThreadPoolExecutor, as_completed
++import ipaddress
++import platform
++import socket
++import subprocess
++import time
++
++
++SERVICE_NAMES = {
++    21: "FTP",
++    22: "SSH",
++    23: "Telnet",
++    53: "DNS",
++    80: "HTTP",
++    139: "NetBIOS",
++    443: "HTTPS",
++    445: "SMB",
++    554: "RTSP",
++    631: "IPP",
++    1883: "MQTT",
++    3389: "RDP",
++    5357: "WSD",
++    5900: "VNC",
++    8008: "HTTP-alt",
++    8080: "HTTP-alt",
++    8443: "HTTPS-alt",
++    8883: "MQTTS",
++    9100: "JetDirect",
++}
++
++DEFAULT_PORTS = tuple(SERVICE_NAMES)
++LIVENESS_PORTS = (443, 80, 445, 22, 53, 3389, 554, 631, 9100)
++
++
++def parse_ports(value: str | None) -> tuple[int, ...]:
++    if not value:
++        return DEFAULT_PORTS
++    ports = []
++    for token in value.split(","):
++        token = token.strip()
++        if not token:
++            continue
++        try:
++            port = int(token)
++        except ValueError:
++            continue
++        if 1 <= port <= 65535 and port not in ports:
++            ports.append(port)
++    return tuple(ports) or DEFAULT_PORTS
++
++
++def _is_private_ipv4(value: str) -> bool:
++    try:
++        ip = ipaddress.ip_address(value)
++    except ValueError:
++        return False
++    return bool(ip.version == 4 and ip.is_private and not ip.is_loopback and not ip.is_link_local)
++
++
++def _ping(ip: str, timeout_ms: int) -> tuple[bool, float | None]:
++    system = platform.system().lower()
++    if system == "windows":
++        command = ["ping", "-n", "1", "-w", str(timeout_ms), ip]
++    else:
++        timeout_seconds = max(1, int((timeout_ms + 999) / 1000))
++        command = ["ping", "-c", "1", "-W", str(timeout_seconds), ip]
++
++    started = time.perf_counter()
++    try:
++        result = subprocess.run(
++            command,
++            stdout=subprocess.DEVNULL,
++            stderr=subprocess.DEVNULL,
++            timeout=max(2.0, timeout_ms / 1000 + 1.0),
++            check=False,
++            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
++        )
++    except (OSError, subprocess.SubprocessError):
++        return False, None
++    elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
++    return result.returncode == 0, elapsed_ms if result.returncode == 0 else None
++
++
++def _tcp_status(ip: str, port: int, timeout_s: float) -> tuple[bool, bool]:
++    """Return (host_responded, port_open) using a normal TCP connect, no payload."""
++    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
++    sock.settimeout(timeout_s)
++    try:
++        rc = sock.connect_ex((ip, port))
++        # 0=open; connection-refused codes still prove that the host answered.
++        responded = rc in {0, 61, 111, 10061}
++        return responded, rc == 0
++    except OSError:
++        return False, False
++    finally:
++        sock.close()
++
++
++def probe_device(ip: str, ports: tuple[int, ...], timeout_ms: int = 250) -> dict:
++    if not _is_private_ipv4(ip):
++        return {
++            "ip": ip,
++            "online": False,
++            "latency_ms": None,
++            "services": [],
++            "error": "probe limited to private IPv4 addresses",
++        }
++
++    ping_ok, latency_ms = _ping(ip, timeout_ms)
++    responded = ping_ok
++    timeout_s = max(0.08, min(timeout_ms / 1000.0, 1.0))
++
++    # Some phones/IoT devices ignore ICMP. A short TCP liveness pass prevents
++    # them from being incorrectly classified as offline.
++    if not responded:
++        for port in LIVENESS_PORTS:
++            host_responded, _ = _tcp_status(ip, port, timeout_s)
++            if host_responded:
++                responded = True
++                break
++
++    services = []
++    if responded:
++        # Small allow-list only: service exposure inventory, not broad port scanning.
++        def check(port: int):
++            _, is_open = _tcp_status(ip, port, timeout_s)
++            return port, is_open
++
++        with ThreadPoolExecutor(max_workers=min(8, max(1, len(ports)))) as pool:
++            futures = [pool.submit(check, port) for port in ports]
++            for future in as_completed(futures):
++                port, is_open = future.result()
++                if is_open:
++                    services.append(
++                        {
++                            "port": port,
++                            "proto": "tcp",
++                            "service": SERVICE_NAMES.get(port, f"TCP/{port}"),
++                        }
++                    )
++
++    services.sort(key=lambda item: item["port"])
++    return {
++        "ip": ip,
++        "online": responded,
++        "latency_ms": latency_ms,
++        "services": services,
++        "error": None,
++    }
++
++
++def probe_devices(
++    devices: list[dict],
++    ports: tuple[int, ...],
++    timeout_ms: int = 250,
++    max_workers: int = 8,
++) -> list[dict]:
++    targets = []
++    seen = set()
++    for device in devices:
++        ip = str(device.get("ip") or "")
++        if ip and ip not in seen and _is_private_ipv4(ip):
++            seen.add(ip)
++            targets.append(ip)
++
++    results = []
++    with ThreadPoolExecutor(max_workers=max(1, min(max_workers, 24))) as pool:
++        future_map = {
++            pool.submit(probe_device, ip, ports, timeout_ms): ip
++            for ip in targets
++        }
++        for future in as_completed(future_map):
++            ip = future_map[future]
++            try:
++                results.append(future.result())
++            except Exception as exc:  # defensive isolation per device
++                results.append(
++                    {
++                        "ip": ip,
++                        "online": False,
++                        "latency_ms": None,
++                        "services": [],
++                        "error": str(exc),
++                    }
++                )
++    results.sort(key=lambda item: tuple(int(x) for x in item["ip"].split(".")))
++    return results
+diff --git a/sentinel/config.py b/sentinel/config.py
+index 557e84c..28b0607 100644
+--- a/sentinel/config.py
++++ b/sentinel/config.py
+@@ -32,6 +32,22 @@ class Settings:
+         10,
+     )
+ 
++
++    device_monitoring: bool = _bool("SENTINEL_DEVICE_MONITORING", True)
++    device_probe_interval: float = max(float(os.getenv("SENTINEL_DEVICE_PROBE_INTERVAL", "45")), 10.0)
++    device_probe_timeout_ms: int = min(
++        max(int(os.getenv("SENTINEL_DEVICE_PROBE_TIMEOUT_MS", "250")), 80),
++        2000,
++    )
++    device_probe_workers: int = min(
++        max(int(os.getenv("SENTINEL_DEVICE_PROBE_WORKERS", "8")), 1),
++        24,
++    )
++    device_service_ports: str = os.getenv(
++        "SENTINEL_DEVICE_SERVICE_PORTS",
++        "21,22,23,53,80,139,443,445,554,631,1883,3389,5357,5900,8008,8080,8443,8883,9100",
++    )
++
+     dns_monitoring: bool = _bool("SENTINEL_DNS_MONITORING", True)
+     dns_interval: float = max(float(os.getenv("SENTINEL_DNS_INTERVAL", "10")), 3.0)
+     dns_burst_threshold: int = max(int(os.getenv("SENTINEL_DNS_BURST_THRESHOLD", "25")), 5)
+diff --git a/sentinel/intelligence.py b/sentinel/intelligence.py
+index cda5d85..0f27219 100644
+--- a/sentinel/intelligence.py
++++ b/sentinel/intelligence.py
+@@ -61,6 +61,18 @@ def device_risk(device: dict, now: float | None = None) -> dict:
+             score += 4
+             reasons.append("hostname unknown")
+ 
++        exposed = int(device.get("open_service_count") or 0)
++        if exposed >= 8:
++            score += 12
++            reasons.append("many LAN services exposed")
++        elif exposed >= 4:
++            score += 5
++            reasons.append("multiple LAN services exposed")
++
++        if device.get("traffic_seen") and not device.get("trusted"):
++            score += 3
++            reasons.append("network traffic observed")
++
+     if device.get("trusted"):
+         score = max(0, score - 35)
+         reasons.append("marked trusted")
+diff --git a/sentinel/state.py b/sentinel/state.py
+index 1957eee..85e003f 100644
+--- a/sentinel/state.py
++++ b/sentinel/state.py
+@@ -41,6 +41,16 @@ class RuntimeState:
+             "capture_dns_events": 0,
+             "last_capture": None,
+             "last_correlation": None,
++            "fleet_enabled": False,
++            "fleet_running": False,
++            "last_fleet_scan": None,
++            "fleet_error": None,
++            "fleet_targets": 0,
++            "fleet_reachable": 0,
++            "fleet_services": 0,
++            "fleet_probe_interval": None,
++            "fleet_last_duration_ms": None,
++            "fleet_manual_queue": 0,
+         }
+ 
+     def update(self, **kwargs):
+diff --git a/sentinel/static/app.css b/sentinel/static/app.css
+index a810652..ad43c39 100644
+--- a/sentinel/static/app.css
++++ b/sentinel/static/app.css
+@@ -102,3 +102,8 @@ button{color:inherit}
+ @media(max-width:1400px){.stat-grid-eight{grid-template-columns:repeat(4,1fr)}}
+ @media(max-width:1180px){.stat-grid-eight{grid-template-columns:repeat(2,1fr)}.investigation-grid{grid-template-columns:1fr}.capture-body{justify-content:flex-start}}
+ @media(max-width:680px){.stat-grid-eight{grid-template-columns:1fr}.baseline-metrics{grid-template-columns:1fr 1fr}.incident-item{grid-template-columns:48px 1fr}.incident-actions{grid-column:2}.capture-body{align-items:flex-start}.capture-radar{width:90px;height:90px;flex-basis:90px}}
++
++/* v0.6 Fleet */
++.fleet-panel{overflow:visible}.fleet-actions{display:flex;align-items:center;gap:8px}.fleet-summary{display:grid;grid-template-columns:repeat(6,1fr);gap:0;border-bottom:1px solid var(--line-soft);background:rgba(255,255,255,.01)}.fleet-summary>div{padding:15px 16px;border-right:1px solid var(--line-soft)}.fleet-summary>div:last-child{border-right:0}.fleet-summary span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:.07em}.fleet-summary strong{display:block;font-size:21px;margin-top:4px}.fleet-note{padding:10px 16px;color:var(--muted);font-size:10px;line-height:1.55;border-bottom:1px solid var(--line-soft);background:rgba(83,214,232,.025)}.fleet-table-wrap{max-height:420px}.service-count{display:inline-grid;place-items:center;min-width:25px;height:22px;border-radius:7px;background:#14202d;border:1px solid #24374b;color:var(--cyan);font-weight:700}.row-actions{display:flex;gap:8px;align-items:center}.device-drawer{position:fixed;top:0;right:0;width:min(520px,94vw);height:100vh;background:#0b121b;border-left:1px solid #26384d;box-shadow:-24px 0 70px rgba(0,0,0,.42);z-index:80;transform:translateX(102%);transition:transform .22s ease;display:flex;flex-direction:column}.device-drawer.open{transform:translateX(0)}.drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:70;opacity:0;pointer-events:none;transition:.2s}.drawer-backdrop.open{opacity:1;pointer-events:auto}.drawer-head{display:flex;align-items:flex-start;justify-content:space-between;padding:20px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0f1925,#0b121b)}.drawer-head h2{font-size:21px;margin:4px 0 3px;letter-spacing:-.03em}.drawer-close{border:1px solid var(--line);background:#101925;color:var(--muted);width:34px;height:34px;border-radius:9px;font-size:22px;cursor:pointer}.drawer-body{padding:18px;overflow:auto;flex:1}.drawer-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.drawer-stat{padding:12px;border:1px solid var(--line);background:#0e1722;border-radius:10px}.drawer-stat span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase}.drawer-stat strong{display:block;font-size:13px;margin-top:5px}.risk-text.low{color:var(--green)}.risk-text.medium{color:var(--amber)}.risk-text.high{color:var(--red)}.drawer-section{padding:17px 0;border-bottom:1px solid var(--line-soft)}.drawer-section h3{font-size:11px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.08em;color:#9bacc0}.service-list{display:flex;gap:7px;flex-wrap:wrap}.service-chip{border:1px solid #2b4058;background:#111e2b;border-radius:8px;padding:7px 9px;font-size:10px}.service-chip b{color:var(--cyan);margin-left:4px}.traffic-pairs{display:grid;grid-template-columns:1fr 1fr;gap:8px}.traffic-pairs>div{border:1px solid var(--line);background:#0e1722;border-radius:10px;padding:12px}.traffic-pairs span,.traffic-pairs small{display:block;color:var(--muted);font-size:9px}.traffic-pairs strong{display:block;font-size:17px;margin:4px 0}.drawer-note{color:var(--muted-2);font-size:9px;line-height:1.5;margin:9px 0 0}.reason-list{margin:0;padding-left:19px;color:var(--muted);font-size:11px;line-height:1.7}.history-list{display:flex;flex-direction:column}.history-row{display:grid;grid-template-columns:10px 1fr auto auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line-soft);font-size:10px}.history-row time{color:var(--muted);font-size:9px}.drawer-actions{display:flex;gap:8px;padding-top:16px}.pill.neutral{color:var(--muted)}
++@media(max-width:1180px){.fleet-summary{grid-template-columns:repeat(3,1fr)}.fleet-summary>div:nth-child(3){border-right:0}.fleet-summary>div:nth-child(-n+3){border-bottom:1px solid var(--line-soft)}}
++@media(max-width:680px){.fleet-summary{grid-template-columns:1fr 1fr}.fleet-summary>div{border-bottom:1px solid var(--line-soft)}.drawer-grid{grid-template-columns:1fr 1fr}.traffic-pairs{grid-template-columns:1fr}.device-drawer{width:100vw}}
+diff --git a/sentinel/static/app.js b/sentinel/static/app.js
+index b1cb1d5..3f1ce5c 100644
+--- a/sentinel/static/app.js
++++ b/sentinel/static/app.js
+@@ -1,7 +1,7 @@
+ const state = {
+   devices: [], listeners: [], connections: [], alerts: [], traffic: [],
+   network: {}, overview: {}, status: {}, dns: [], communications: [],
+-  anomalies: [], baseline: {}, flows: [], timeline: [], incidents: [], capture: {},
++  anomalies: [], baseline: {}, flows: [], timeline: [], incidents: [], capture: {}, fleet: {},
+   deviceFilter: 'all', alertFilter: 'open', query: ''
+ };
+ 
+@@ -268,18 +268,116 @@ function riskBadge(risk){
+   return `<span class="risk-badge ${esc(r.level)}" title="${esc(title)}"><b>${esc(r.score)}</b><span>${esc(r.level)}</span></span>`;
+ }
+ 
++function probeMeta(device){
++  if(!device.monitored) return ['pending','neutral'];
++  if(device.probe_online) return ['reachable','good'];
++  return ['unreachable','warn'];
++}
++
++function renderFleet(){
++  const f=state.fleet||{};
++  $('fleetKnown').textContent=f.known ?? 0;
++  $('fleetMonitored').textContent=f.monitored ?? 0;
++  $('fleetReachable').textContent=f.reachable ?? 0;
++  $('fleetUnreachable').textContent=f.unreachable ?? 0;
++  $('fleetServices').textContent=f.active_services ?? 0;
++  $('fleetTrafficSeen').textContent=f.traffic_seen_recently ?? 0;
++
++  const status=$('fleetStatus');
++  if(f.error){status.className='pill bad';status.textContent='error';status.title=f.error;}
++  else if(!f.enabled){status.className='pill neutral';status.textContent='disabled';}
++  else if(f.running){status.className='pill warn';status.textContent='probing';}
++  else {status.className='pill good';status.textContent=f.last_scan?'active':'starting';}
++
++  const rows=state.devices.filter(d=>matchesQuery(d.ip,d.mac,d.hostname,d.vendor,d.risk?.reasons?.join(' ')));
++  $('fleetTable').innerHTML=rows.length?rows.map(d=>{
++    const [label,cls]=probeMeta(d);
++    const t=d.traffic||{};
++    const traffic=Number(t.bytes_from||0)+Number(t.bytes_to||0);
++    return `<tr>
++      <td><span class="device-name">${esc(d.hostname||(d.is_gateway?'Gateway':'Unknown device'))}</span><span class="subline">${esc(d.ip)} · ${esc(d.vendor||'unknown vendor')}</span></td>
++      <td><span class="pill ${cls}">${label}</span></td>
++      <td>${d.probe_latency_ms==null?'—':`${Number(d.probe_latency_ms).toFixed(1)} ms`}</td>
++      <td><span class="service-count">${Number(d.open_service_count||0)}</span></td>
++      <td>${traffic?fmtBytes(traffic):'—'}<span class="subline">${t.last_seen?when(t.last_seen):'sensor has not seen traffic'}</span></td>
++      <td>${when(d.last_probe)}</td>
++      <td class="row-actions"><button class="ack-btn" onclick="probeDevice('${encodeURIComponent(d.ip)}')">probe</button><button class="ack-btn" onclick="openDeviceDrawer('${encodeURIComponent(d.ip)}')">inspect</button></td>
++    </tr>`;
++  }).join(''):`<tr><td colspan="7"><div class="empty">No discovered devices yet</div></td></tr>`;
++}
++
++async function openDeviceDrawer(encodedIp){
++  const ip=decodeURIComponent(encodedIp);
++  const drawer=$('deviceDrawer'), backdrop=$('deviceDrawerBackdrop');
++  drawer.classList.add('open');backdrop.classList.add('open');drawer.setAttribute('aria-hidden','false');
++  $('drawerTitle').textContent=ip;$('drawerSubtitle').textContent='Loading device profile...';
++  $('drawerBody').innerHTML='<div class="empty">Loading telemetry...</div>';
++  try{
++    const [profile,history]=await Promise.all([
++      api(`/api/devices/${encodeURIComponent(ip)}/profile`),
++      api(`/api/devices/${encodeURIComponent(ip)}/history?limit=40`)
++    ]);
++    const services=profile.services||[], active=services.filter(x=>x.active);
++    const traffic=profile.traffic||{};
++    const risk=profile.risk||{score:0,level:'low',reasons:[]};
++    $('drawerTitle').textContent=profile.hostname || (profile.is_gateway?'Gateway':'Unknown device');
++    $('drawerSubtitle').textContent=`${profile.ip} · ${profile.mac||'MAC unknown'} · ${profile.vendor||'vendor unknown'}`;
++    const reasons=(risk.reasons||[]).map(x=>`<li>${esc(x)}</li>`).join('') || '<li>No notable local heuristic factors</li>';
++    const serviceHtml=active.length?active.map(x=>`<span class="service-chip">${esc(x.service)} <b>${esc(x.port)}</b></span>`).join(''):'<span class="muted">No monitored TCP services currently open</span>';
++    const historyHtml=history.length?history.slice(0,18).map(h=>`<div class="history-row"><span class="dot ${h.online?'online':''}"></span><span>${h.online?'reachable':'unreachable'}</span><b>${h.latency_ms==null?'—':`${Number(h.latency_ms).toFixed(1)} ms`}</b><time>${when(h.observed_at)}</time></div>`).join(''):'<div class="empty">No probe history yet</div>';
++    $('drawerBody').innerHTML=`
++      <div class="drawer-grid">
++        <div class="drawer-stat"><span>Risk</span><strong class="risk-text ${esc(risk.level)}">${esc(risk.score)}/100</strong></div>
++        <div class="drawer-stat"><span>Probe</span><strong>${profile.monitored?(profile.probe_online?'reachable':'unreachable'):'pending'}</strong></div>
++        <div class="drawer-stat"><span>Latency</span><strong>${profile.probe_latency_ms==null?'—':`${Number(profile.probe_latency_ms).toFixed(1)} ms`}</strong></div>
++        <div class="drawer-stat"><span>Services</span><strong>${active.length}</strong></div>
++      </div>
++      <div class="drawer-section"><h3>Exposed LAN services</h3><div class="service-list">${serviceHtml}</div></div>
++      <div class="drawer-section"><h3>Sensor-observed traffic</h3>
++        <div class="traffic-pairs"><div><span>From device</span><strong>${fmtBytes(traffic.bytes_from||0)}</strong><small>${Number(traffic.packets_from||0).toLocaleString()} packets</small></div><div><span>To device</span><strong>${fmtBytes(traffic.bytes_to||0)}</strong><small>${Number(traffic.packets_to||0).toLocaleString()} packets</small></div></div>
++        <p class="drawer-note">These counters only include frames visible to the optional capture sensor. They are not guaranteed to represent all traffic on a switched LAN.</p>
++      </div>
++      <div class="drawer-section"><h3>Risk factors</h3><ul class="reason-list">${reasons}</ul></div>
++      <div class="drawer-section"><h3>Reachability history</h3><div class="history-list">${historyHtml}</div></div>
++      <div class="drawer-actions"><button class="btn btn-primary" onclick="probeDevice('${encodeURIComponent(ip)}')">Probe now</button><button class="btn btn-ghost" onclick="setTrust('${encodeURIComponent(ip)}',${!profile.trusted})">${profile.trusted?'Remove trust':'Mark trusted'}</button></div>`;
++  }catch(e){$('drawerBody').innerHTML=`<div class="empty">Unable to load device: ${esc(e.message)}</div>`;}
++}
++
++function closeDeviceDrawer(){
++  $('deviceDrawer').classList.remove('open');$('deviceDrawerBackdrop').classList.remove('open');$('deviceDrawer').setAttribute('aria-hidden','true');
++}
++
++async function probeDevice(encodedIp){
++  const ip=decodeURIComponent(encodedIp);
++  try{await api(`/api/devices/${encodeURIComponent(ip)}/probe`,{method:'POST'});toast(`Probe queued for ${ip}`);}
++  catch(e){toast(`Probe failed: ${e.message}`);}
++}
++
++async function fleetScan(){
++  const btn=$('fleetScanBtn');btn.disabled=true;btn.textContent='Probe queued...';
++  try{await api('/api/fleet/scan',{method:'POST'});toast('Fleet probe queued');}
++  catch(e){toast(e.message);}finally{setTimeout(()=>{btn.disabled=false;btn.textContent='Probe all devices';},2200);}
++}
++
+ function renderDevices(){
+   let rows=state.devices.filter(d=>matchesQuery(d.ip,d.mac,d.hostname,d.vendor,d.risk?.reasons?.join(' ')));
+   if(state.deviceFilter==='online') rows=rows.filter(d=>d.online);
+   if(state.deviceFilter==='untrusted') rows=rows.filter(d=>d.online&&!d.trusted&&!d.is_gateway);
+   if(state.deviceFilter==='risk') rows=rows.filter(d=>(d.risk?.score||0)>=30);
+-  $('devicesTable').innerHTML=rows.length?rows.map(d=>`<tr>
+-    <td><span class="device-status"><span class="dot ${d.online?'online':''}"></span>${d.online?'Online':'Offline'}</span></td>
+-    <td><span class="device-name">${esc(d.hostname || (d.is_gateway?'Gateway':'Unknown device'))}</span><span class="subline">${d.is_gateway?'default gateway':esc(d.interface||'')}</span></td>
+-    <td>${esc(d.ip)}</td><td>${esc(d.mac||'—')}</td><td>${esc(d.vendor||'—')}</td>
+-    <td>${riskBadge(d.risk)}</td>
+-    <td><button class="trust-btn ${d.trusted?'trusted':''}" onclick="setTrust('${encodeURIComponent(d.ip)}',${!d.trusted})">${d.trusted?'Trusted':'Mark trusted'}</button></td>
+-    <td>${when(d.last_seen)}</td></tr>`).join(''):`<tr><td colspan="8"><div class="empty">No matching devices</div></td></tr>`;
++  $('devicesTable').innerHTML=rows.length?rows.map(d=>{
++    const [probeLabel,probeClass]=probeMeta(d);
++    return `<tr>
++      <td><span class="device-status"><span class="dot ${d.online?'online':''}"></span>${d.online?'Online':'Offline'}</span></td>
++      <td><span class="device-name">${esc(d.hostname || (d.is_gateway?'Gateway':'Unknown device'))}</span><span class="subline">${d.is_gateway?'default gateway':esc(d.interface||'')}</span></td>
++      <td>${esc(d.ip)}</td><td>${esc(d.mac||'—')}</td><td>${esc(d.vendor||'—')}</td>
++      <td>${riskBadge(d.risk)}</td>
++      <td><span class="pill ${probeClass}">${probeLabel}</span><span class="subline">${d.probe_latency_ms==null?'':`${Number(d.probe_latency_ms).toFixed(1)} ms`}</span></td>
++      <td>${Number(d.open_service_count||0)}</td>
++      <td><button class="trust-btn ${d.trusted?'trusted':''}" onclick="setTrust('${encodeURIComponent(d.ip)}',${!d.trusted})">${d.trusted?'Trusted':'Mark trusted'}</button></td>
++      <td>${when(d.last_seen)}</td>
++      <td><button class="ack-btn" onclick="openDeviceDrawer('${encodeURIComponent(d.ip)}')">inspect</button></td>
++    </tr>`;
++  }).join(''):`<tr><td colspan="11"><div class="empty">No matching devices</div></td></tr>`;
+ }
+ 
+ function renderSockets(){
+@@ -324,25 +422,25 @@ async function scanNow(){
+ function renderAll(){
+   renderOverview();renderBaseline();renderAnomalies();renderDns();renderCommunications();
+   renderCapture();renderIncidents();renderFlows();renderTimeline();
+-  renderNetworkInfo();renderTopology();drawTraffic();renderDevices();renderSockets();renderAlerts();
++  renderNetworkInfo();renderTopology();drawTraffic();renderFleet();renderDevices();renderSockets();renderAlerts();
+ }
+ 
+ async function refresh(){
+   try{
+-    const [status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline,flows,timeline,incidents,capture]=await Promise.all([
++    const [status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline,flows,timeline,incidents,capture,fleet]=await Promise.all([
+       api('/api/status'),api('/api/overview'),api('/api/network'),api('/api/devices'),api('/api/listeners'),api('/api/connections'),api('/api/alerts'),api('/api/traffic'),
+       api('/api/dns?limit=250'),api('/api/communications?limit=300'),api('/api/anomalies?limit=100'),api('/api/baseline'),
+-      api('/api/flows?limit=300'),api('/api/timeline?limit=250'),api('/api/incidents?limit=100'),api('/api/capture')
++      api('/api/flows?limit=300'),api('/api/timeline?limit=250'),api('/api/incidents?limit=100'),api('/api/capture'),api('/api/fleet')
+     ]);
+-    Object.assign(state,{status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline,flows,timeline,incidents,capture});renderAll();
++    Object.assign(state,{status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline,flows,timeline,incidents,capture,fleet});renderAll();
+   }catch(e){$('sideStatus').textContent='API unavailable';$('sideDot').className='status-dot';console.error(e);}
+ }
+ 
+-$('scanBtn').addEventListener('click',scanNow);$('ackAllBtn').addEventListener('click',ackAll);
+-$('globalSearch').addEventListener('input',e=>{state.query=e.target.value.trim().toLowerCase();renderDevices();renderSockets();renderAlerts();renderDns();renderCommunications();renderIncidents();renderFlows();renderTimeline();});
++$('scanBtn').addEventListener('click',scanNow);$('fleetScanBtn').addEventListener('click',fleetScan);$('ackAllBtn').addEventListener('click',ackAll);
++$('globalSearch').addEventListener('input',e=>{state.query=e.target.value.trim().toLowerCase();renderFleet();renderDevices();renderSockets();renderAlerts();renderDns();renderCommunications();renderIncidents();renderFlows();renderTimeline();});
+ document.querySelectorAll('[data-device-filter]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-device-filter]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.deviceFilter=b.dataset.deviceFilter;renderDevices();}));
+ document.querySelectorAll('[data-alert-filter]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-alert-filter]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.alertFilter=b.dataset.alertFilter;renderAlerts();}));
+ document.querySelectorAll('.nav-link').forEach(a=>a.addEventListener('click',()=>{document.querySelectorAll('.nav-link').forEach(x=>x.classList.remove('active'));a.classList.add('active');}));
+-window.addEventListener('resize',drawTraffic);
++window.addEventListener('resize',drawTraffic);document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDeviceDrawer();});
+ 
+ refresh();setInterval(refresh,3000);
+diff --git a/sentinel/static/index.html b/sentinel/static/index.html
+index f15eacc..1cb2aef 100644
+--- a/sentinel/static/index.html
++++ b/sentinel/static/index.html
+@@ -23,6 +23,7 @@
+         <a class="nav-link" href="#intelligence"><span>⌁</span> Intelligence</a>
+         <a class="nav-link" href="#incidents"><span>◆</span> Incidents</a>
+         <a class="nav-link" href="#network"><span>⌘</span> Network</a>
++        <a class="nav-link" href="#fleet"><span>◫</span> Fleet</a>
+         <a class="nav-link" href="#devices"><span>▦</span> Devices</a>
+         <a class="nav-link" href="#connections"><span>⇄</span> Connections</a>
+         <a class="nav-link" href="#alerts"><span>△</span> Alerts</a>
+@@ -30,7 +31,7 @@
+ 
+       <div class="sidebar-footer">
+         <div class="mini-status"><span id="sideDot" class="status-dot"></span><span id="sideStatus">Connecting</span></div>
+-        <div class="version">v0.5.0 · Investigator</div>
++        <div class="version">v0.6.0 · Fleet</div>
+       </div>
+     </aside>
+ 
+@@ -38,7 +39,7 @@
+       <header class="topbar">
+         <div>
+           <div class="eyebrow">LOCAL SECURITY CONSOLE</div>
+-          <h1>Investigator</h1>
++          <h1>Fleet</h1>
+         </div>
+         <div class="top-actions">
+           <div class="search-wrap">
+@@ -199,6 +200,34 @@
+         </article>
+       </section>
+ 
++      <section id="fleet" class="section panel fleet-panel">
++        <div class="panel-head table-head">
++          <div><div class="panel-kicker">LAN-WIDE DEVICE WATCH</div><div class="panel-title">Fleet monitor</div></div>
++          <div class="panel-actions fleet-actions">
++            <span id="fleetStatus" class="pill neutral">waiting</span>
++            <button id="fleetScanBtn" class="btn btn-ghost small" type="button">Probe all devices</button>
++          </div>
++        </div>
++        <div class="fleet-summary">
++          <div><span>Known</span><strong id="fleetKnown">0</strong></div>
++          <div><span>Probed</span><strong id="fleetMonitored">0</strong></div>
++          <div><span>Reachable</span><strong id="fleetReachable">0</strong></div>
++          <div><span>Unreachable</span><strong id="fleetUnreachable">0</strong></div>
++          <div><span>Open services</span><strong id="fleetServices">0</strong></div>
++          <div><span>Traffic seen</span><strong id="fleetTrafficSeen">0</strong></div>
++        </div>
++        <div class="fleet-note">
++          Agentless monitoring uses LAN discovery, ICMP/TCP reachability and a small configurable service-port allow-list.
++          Traffic counters include only packets visible to this sensor; a normal switched Wi-Fi/Ethernet network does not expose every device's unicast traffic to your PC.
++        </div>
++        <div class="table-wrap fleet-table-wrap">
++          <table>
++            <thead><tr><th>Device</th><th>Probe</th><th>Latency</th><th>Services</th><th>Traffic observed</th><th>Last probe</th><th></th></tr></thead>
++            <tbody id="fleetTable"></tbody>
++          </table>
++        </div>
++      </section>
++
+       <section id="network" class="section two-col wide-left">
+         <article class="panel">
+           <div class="panel-head">
+@@ -244,7 +273,7 @@
+         </div>
+         <div class="table-wrap">
+           <table>
+-            <thead><tr><th>Status</th><th>Device</th><th>IP</th><th>MAC</th><th>Vendor</th><th>Risk</th><th>Trust</th><th>Last seen</th></tr></thead>
++            <thead><tr><th>Status</th><th>Device</th><th>IP</th><th>MAC</th><th>Vendor</th><th>Risk</th><th>Probe</th><th>Services</th><th>Trust</th><th>Last seen</th><th></th></tr></thead>
+             <tbody id="devicesTable"></tbody>
+           </table>
+         </div>
+@@ -277,10 +306,19 @@
+         </div>
+       </section>
+ 
+-      <footer>Network Sentinel runs locally. Investigator correlates local telemetry and optional packet metadata only. Monitor only systems and networks you own or are authorized to administer.</footer>
++      <footer>Network Sentinel runs locally. Fleet adds agentless monitoring of discovered private-LAN devices; it does not remotely take control of them. Monitor only systems and networks you own or are authorized to administer.</footer>
+     </main>
+   </div>
+ 
++  <div id="deviceDrawerBackdrop" class="drawer-backdrop" onclick="closeDeviceDrawer()"></div>
++  <aside id="deviceDrawer" class="device-drawer" aria-hidden="true">
++    <div class="drawer-head">
++      <div><div class="panel-kicker">DEVICE INSPECTOR</div><h2 id="drawerTitle">Device</h2><div id="drawerSubtitle" class="muted">—</div></div>
++      <button class="drawer-close" type="button" onclick="closeDeviceDrawer()">×</button>
++    </div>
++    <div id="drawerBody" class="drawer-body"><div class="empty">Select a device</div></div>
++  </aside>
++
+   <div id="toast" class="toast"></div>
+   <script src="/static/app.js"></script>
+ </body>
+diff --git a/sentinel/storage.py b/sentinel/storage.py
+index a9571ba..f1f830f 100644
+--- a/sentinel/storage.py
++++ b/sentinel/storage.py
+@@ -112,6 +112,40 @@ CREATE TABLE IF NOT EXISTS incidents(
+     score INTEGER NOT NULL DEFAULT 0
+ );
+ 
++
++CREATE TABLE IF NOT EXISTS device_samples(
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    ip TEXT NOT NULL,
++    observed_at REAL NOT NULL,
++    online INTEGER NOT NULL,
++    latency_ms REAL,
++    open_port_count INTEGER NOT NULL DEFAULT 0
++);
++
++CREATE TABLE IF NOT EXISTS device_services(
++    ip TEXT NOT NULL,
++    proto TEXT NOT NULL,
++    port INTEGER NOT NULL,
++    service TEXT NOT NULL,
++    first_seen REAL NOT NULL,
++    last_seen REAL NOT NULL,
++    active INTEGER NOT NULL DEFAULT 1,
++    PRIMARY KEY(ip, proto, port)
++);
++
++CREATE TABLE IF NOT EXISTS device_traffic(
++    ip TEXT PRIMARY KEY,
++    packets_from INTEGER NOT NULL DEFAULT 0,
++    packets_to INTEGER NOT NULL DEFAULT 0,
++    bytes_from INTEGER NOT NULL DEFAULT 0,
++    bytes_to INTEGER NOT NULL DEFAULT 0,
++    first_seen REAL NOT NULL,
++    last_seen REAL NOT NULL
++);
++
++CREATE INDEX IF NOT EXISTS idx_device_samples_ip_time ON device_samples(ip, observed_at DESC);
++CREATE INDEX IF NOT EXISTS idx_device_services_ip_active ON device_services(ip, active);
++CREATE INDEX IF NOT EXISTS idx_device_traffic_last_seen ON device_traffic(last_seen DESC);
+ CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at DESC);
+ CREATE INDEX IF NOT EXISTS idx_alerts_kind_created ON alerts(kind, created_at DESC);
+ CREATE INDEX IF NOT EXISTS idx_dns_last_seen ON dns_records(last_seen DESC);
+@@ -374,6 +408,262 @@ class Storage:
+             )
+             return False
+ 
++    def record_device_probe(self, result: dict) -> dict:
++        """Persist an agentless reachability/service sample and emit change alerts."""
++        now = float(result.get("timestamp") or time.time())
++        ip = str(result.get("ip") or "").strip()
++        if not ip:
++            return {"ip": ip, "changed": False, "added": [], "removed": []}
++        online = bool(result.get("online"))
++        latency_ms = result.get("latency_ms")
++        services = result.get("services") or []
++        normalized = {
++            (str(item.get("proto") or "tcp"), int(item.get("port") or 0)): str(item.get("service") or "unknown")
++            for item in services
++            if int(item.get("port") or 0) > 0
++        }
++
++        added = []
++        removed = []
++        state_change = None
++        trusted = False
++        with self.lock, self._conn() as con:
++            device = con.execute("SELECT trusted FROM devices WHERE ip=?", (ip,)).fetchone()
++            trusted = bool(device and device["trusted"])
++            prev = con.execute(
++                "SELECT * FROM device_samples WHERE ip=? ORDER BY id DESC LIMIT 1", (ip,)
++            ).fetchone()
++            prev_online = bool(prev["online"]) if prev is not None else None
++            if prev_online is not None and prev_online != online:
++                state_change = "online" if online else "offline"
++
++            prev_services = {
++                (row["proto"], int(row["port"])): row["service"]
++                for row in con.execute(
++                    "SELECT proto,port,service FROM device_services WHERE ip=? AND active=1", (ip,)
++                ).fetchall()
++            }
++
++            con.execute(
++                """INSERT INTO device_samples(ip,observed_at,online,latency_ms,open_port_count)
++                VALUES(?,?,?,?,?)""",
++                (ip, now, int(online), latency_ms, len(normalized)),
++            )
++
++            if online:
++                con.execute("UPDATE devices SET last_seen=? WHERE ip=?", (now, ip))
++                con.execute("UPDATE device_services SET active=0 WHERE ip=?", (ip,))
++                for (proto, port), service in normalized.items():
++                    old = con.execute(
++                        "SELECT 1 FROM device_services WHERE ip=? AND proto=? AND port=?",
++                        (ip, proto, port),
++                    ).fetchone()
++                    if old is None:
++                        con.execute(
++                            """INSERT INTO device_services(
++                                ip,proto,port,service,first_seen,last_seen,active
++                            ) VALUES(?,?,?,?,?,?,1)""",
++                            (ip, proto, port, service, now, now),
++                        )
++                    else:
++                        con.execute(
++                            """UPDATE device_services SET service=?,last_seen=?,active=1
++                            WHERE ip=? AND proto=? AND port=?""",
++                            (service, now, ip, proto, port),
++                        )
++
++                if prev is not None:
++                    current_keys = set(normalized)
++                    previous_keys = set(prev_services)
++                    added = [
++                        {"proto": proto, "port": port, "service": normalized[(proto, port)]}
++                        for proto, port in sorted(current_keys - previous_keys, key=lambda item: item[1])
++                    ]
++                    removed = [
++                        {"proto": proto, "port": port, "service": prev_services[(proto, port)]}
++                        for proto, port in sorted(previous_keys - current_keys, key=lambda item: item[1])
++                    ]
++
++        if state_change == "offline":
++            title = f"Device offline: {ip}"
++            if not self.recent_alert("device_offline", title, 300):
++                self.add_alert(
++                    "medium" if trusted else "low",
++                    "device_offline",
++                    title,
++                    "Agentless fleet probe no longer receives ICMP/TCP responses.",
++                    remote_ip=ip,
++                )
++        elif state_change == "online":
++            title = f"Device back online: {ip}"
++            if not self.recent_alert("device_online", title, 300):
++                self.add_alert(
++                    "low",
++                    "device_online",
++                    title,
++                    "Agentless fleet probe can reach the device again.",
++                    remote_ip=ip,
++                )
++
++        if added:
++            summary = ", ".join(f"{item['service']}:{item['port']}" for item in added[:8])
++            title = f"New exposed service on {ip}"
++            if not self.recent_alert("device_service_added", title, 600):
++                self.add_alert(
++                    "low",
++                    "device_service_added",
++                    title,
++                    summary,
++                    remote_ip=ip,
++                )
++        if removed:
++            summary = ", ".join(f"{item['service']}:{item['port']}" for item in removed[:8])
++            self.add_event(
++                "device",
++                "info",
++                f"Service no longer observed on {ip}",
++                summary,
++                remote_ip=ip,
++            )
++
++        return {
++            "ip": ip,
++            "changed": bool(state_change or added or removed),
++            "state_change": state_change,
++            "added": added,
++            "removed": removed,
++        }
++
++    def known_device_ips(self) -> set[str]:
++        with self._conn() as con:
++            return {row["ip"] for row in con.execute("SELECT ip FROM devices").fetchall()}
++
++    def record_device_packet(self, ip: str, direction: str, size: int, observed_at=None):
++        now = float(observed_at or time.time())
++        size = max(0, int(size or 0))
++        if direction not in {"from", "to"}:
++            return
++        with self.lock, self._conn() as con:
++            old = con.execute("SELECT 1 FROM device_traffic WHERE ip=?", (ip,)).fetchone()
++            if old is None:
++                con.execute(
++                    """INSERT INTO device_traffic(
++                        ip,packets_from,packets_to,bytes_from,bytes_to,first_seen,last_seen
++                    ) VALUES(?,?,?,?,?,?,?)""",
++                    (
++                        ip,
++                        1 if direction == "from" else 0,
++                        1 if direction == "to" else 0,
++                        size if direction == "from" else 0,
++                        size if direction == "to" else 0,
++                        now,
++                        now,
++                    ),
++                )
++            elif direction == "from":
++                con.execute(
++                    """UPDATE device_traffic SET packets_from=packets_from+1,
++                    bytes_from=bytes_from+?,last_seen=? WHERE ip=?""",
++                    (size, now, ip),
++                )
++            else:
++                con.execute(
++                    """UPDATE device_traffic SET packets_to=packets_to+1,
++                    bytes_to=bytes_to+?,last_seen=? WHERE ip=?""",
++                    (size, now, ip),
++                )
++
++    def device_profiles(self, online_window=130):
++        devices = self.devices(online_window)
++        with self._conn() as con:
++            latest = {
++                row["ip"]: dict(row)
++                for row in con.execute(
++                    """SELECT ds.* FROM device_samples ds
++                    JOIN (SELECT ip,MAX(id) AS max_id FROM device_samples GROUP BY ip) x
++                    ON ds.id=x.max_id"""
++                ).fetchall()
++            }
++            service_counts = {
++                row["ip"]: int(row["n"])
++                for row in con.execute(
++                    "SELECT ip,COUNT(*) AS n FROM device_services WHERE active=1 GROUP BY ip"
++                ).fetchall()
++            }
++            traffic = {
++                row["ip"]: dict(row)
++                for row in con.execute("SELECT * FROM device_traffic").fetchall()
++            }
++
++        for device in devices:
++            sample = latest.get(device["ip"])
++            device["monitored"] = sample is not None
++            device["probe_online"] = bool(sample["online"]) if sample else None
++            device["probe_latency_ms"] = sample["latency_ms"] if sample else None
++            device["last_probe"] = sample["observed_at"] if sample else None
++            device["open_service_count"] = service_counts.get(device["ip"], 0)
++            t = traffic.get(device["ip"])
++            device["traffic_seen"] = bool(t)
++            device["traffic"] = t or {
++                "packets_from": 0, "packets_to": 0,
++                "bytes_from": 0, "bytes_to": 0, "last_seen": None,
++            }
++        return devices
++
++    def device_profile(self, ip: str, online_window=130):
++        return next((d for d in self.device_profiles(online_window) if d["ip"] == ip), None)
++
++    def device_history(self, ip: str, limit=120):
++        with self._conn() as con:
++            return [
++                dict(row) for row in con.execute(
++                    """SELECT * FROM device_samples WHERE ip=?
++                    ORDER BY observed_at DESC LIMIT ?""",
++                    (ip, limit),
++                ).fetchall()
++            ]
++
++    def device_services(self, ip: str, active_only=False):
++        with self._conn() as con:
++            if active_only:
++                rows = con.execute(
++                    """SELECT * FROM device_services WHERE ip=? AND active=1
++                    ORDER BY port ASC""", (ip,)
++                ).fetchall()
++            else:
++                rows = con.execute(
++                    "SELECT * FROM device_services WHERE ip=? ORDER BY active DESC,port ASC", (ip,)
++                ).fetchall()
++            return [dict(row) for row in rows]
++
++    def device_traffic(self, ip: str):
++        with self._conn() as con:
++            row = con.execute("SELECT * FROM device_traffic WHERE ip=?", (ip,)).fetchone()
++            return dict(row) if row else {
++                "ip": ip, "packets_from": 0, "packets_to": 0,
++                "bytes_from": 0, "bytes_to": 0, "first_seen": None, "last_seen": None,
++            }
++
++    def fleet_summary(self, online_window=130):
++        profiles = self.device_profiles(online_window)
++        now = time.time()
++        monitored = [d for d in profiles if d.get("monitored")]
++        reachable = [d for d in monitored if d.get("probe_online")]
++        services = sum(int(d.get("open_service_count") or 0) for d in profiles)
++        traffic_seen = [
++            d for d in profiles
++            if d.get("traffic", {}).get("last_seen")
++            and now - float(d["traffic"]["last_seen"]) <= 300
++        ]
++        return {
++            "known": len(profiles),
++            "monitored": len(monitored),
++            "reachable": len(reachable),
++            "unreachable": max(0, len(monitored) - len(reachable)),
++            "active_services": services,
++            "traffic_seen_recently": len(traffic_seen),
++        }
++
+     def correlate_incidents(self, window_seconds=120, min_score=35):
+         now = time.time()
+         cutoff = now - window_seconds
+@@ -564,6 +854,7 @@ class Storage:
+             dns_deleted = con.execute("DELETE FROM dns_records WHERE last_seen<?", (cutoff,)).rowcount
+             comm_deleted = con.execute("DELETE FROM communications WHERE last_seen<?", (cutoff,)).rowcount
+             flow_deleted = con.execute("DELETE FROM flows WHERE last_seen<?", (cutoff,)).rowcount
++            sample_deleted = con.execute("DELETE FROM device_samples WHERE observed_at<?", (cutoff,)).rowcount
+             event_deleted = con.execute(
+                 "DELETE FROM security_events WHERE created_at<? AND incident_id IS NULL", (cutoff,)
+             ).rowcount
+@@ -571,5 +862,6 @@ class Storage:
+             "dns": dns_deleted,
+             "communications": comm_deleted,
+             "flows": flow_deleted,
++            "device_samples": sample_deleted,
+             "events": event_deleted,
+         }
+diff --git a/sentinel/worker.py b/sentinel/worker.py
+index dec39b1..624bff1 100644
+--- a/sentinel/worker.py
++++ b/sentinel/worker.py
+@@ -4,6 +4,7 @@ import traceback
+ 
+ from .collectors.arp import collect_arp
+ from .collectors.dns import collect_dns_cache
++from .collectors.device_probe import parse_ports, probe_devices
+ from .collectors.host import collect_connections, collect_listeners, network_counters
+ from .collectors.network import discover_network
+ from .collectors.packet import match_process, normalized_packet
+@@ -185,6 +186,8 @@ class PacketCaptureWorker(threading.Thread):
+         self.bpf_filter = bpf_filter or "ip"
+         self.stop_event = threading.Event()
+         self.recent_dns = {}
++        self.device_ips = set()
++        self.device_ips_refreshed = 0.0
+ 
+     def stop(self):
+         self.stop_event.set()
+@@ -206,8 +209,19 @@ class PacketCaptureWorker(threading.Thread):
+         flow["pid"] = pid
+         self.storage.record_flow(flow)
+ 
+-        dns_count = 0
+         now = time.time()
++        if now - self.device_ips_refreshed >= 15:
++            self.device_ips = self.storage.known_device_ips()
++            self.device_ips_refreshed = now
++        src_ip = flow.get("src_ip")
++        dst_ip = flow.get("dst_ip")
++        packet_size = flow.get("length") or 0
++        if src_ip in self.device_ips:
++            self.storage.record_device_packet(src_ip, "from", packet_size, observed_at=now)
++        if dst_ip in self.device_ips:
++            self.storage.record_device_packet(dst_ip, "to", packet_size, observed_at=now)
++
++        dns_count = 0
+         for event in flow.get("dns_events") or []:
+             domain = event.get("domain") or ""
+             answer = event.get("answer")
+@@ -287,6 +301,101 @@ class PacketCaptureWorker(threading.Thread):
+         runtime.update(capture_running=False)
+ 
+ 
++class FleetWorker(threading.Thread):
++    """Agentless health/service monitoring for known private-LAN devices."""
++
++    daemon = True
++
++    def __init__(
++        self,
++        storage,
++        enabled=True,
++        interval=45,
++        timeout_ms=250,
++        service_ports="",
++        max_workers=8,
++        online_window=130,
++    ):
++        super().__init__(name="network-sentinel-fleet")
++        self.storage = storage
++        self.enabled = enabled
++        self.interval = interval
++        self.timeout_ms = timeout_ms
++        self.ports = parse_ports(service_ports)
++        self.max_workers = max_workers
++        self.online_window = online_window
++        self.stop_event = threading.Event()
++        self.scan_event = threading.Event()
++        self.queue_lock = threading.Lock()
++        self.manual_targets = set()
++
++    def stop(self):
++        self.stop_event.set()
++        self.scan_event.set()
++
++    def trigger(self, ip=None):
++        if ip:
++            with self.queue_lock:
++                self.manual_targets.add(str(ip))
++        self.scan_event.set()
++
++    def _take_targets(self):
++        with self.queue_lock:
++            targets = set(self.manual_targets)
++            self.manual_targets.clear()
++        devices = self.storage.devices(self.online_window)
++        if targets:
++            return [d for d in devices if d.get("ip") in targets]
++        return devices
++
++    def run(self):
++        runtime.update(
++            fleet_enabled=self.enabled,
++            fleet_running=False,
++            fleet_probe_interval=self.interval,
++        )
++        if not self.enabled:
++            runtime.update(fleet_error="Fleet monitoring disabled by configuration")
++            return
++
++        while not self.stop_event.is_set():
++            started = time.perf_counter()
++            results = []
++            runtime.update(fleet_running=True, fleet_error=None)
++            try:
++                targets = self._take_targets()
++                results = probe_devices(
++                    targets,
++                    self.ports,
++                    timeout_ms=self.timeout_ms,
++                    max_workers=self.max_workers,
++                )
++                for result in results:
++                    self.storage.record_device_probe(result)
++
++                summary = self.storage.fleet_summary(self.online_window)
++                duration_ms = round((time.perf_counter() - started) * 1000, 1)
++                runtime.update(
++                    last_fleet_scan=time.time(),
++                    fleet_targets=len(results),
++                    fleet_reachable=sum(1 for r in results if r.get("online")),
++                    fleet_services=sum(len(r.get("services") or []) for r in results),
++                    fleet_last_duration_ms=duration_ms,
++                    fleet_manual_queue=0,
++                    fleet_error=None,
++                    **{f"fleet_summary_{k}": v for k, v in summary.items()},
++                )
++            except Exception:
++                runtime.update(fleet_error=traceback.format_exc(limit=4))
++            finally:
++                runtime.update(fleet_running=False)
++
++            self.scan_event.clear()
++            self.scan_event.wait(5 if not results else self.interval)
++
++        runtime.update(fleet_running=False)
++
++
+ class DiscoveryWorker(threading.Thread):
+     daemon = True
+ 
+diff --git a/tests/test_fleet.py b/tests/test_fleet.py
+new file mode 100644
+index 0000000..215e77a
+--- /dev/null
++++ b/tests/test_fleet.py
+@@ -0,0 +1,82 @@
++import os
++import tempfile
++import unittest
++
++from sentinel.collectors.device_probe import parse_ports
++from sentinel.storage import Storage
++
++
++class FleetTests(unittest.TestCase):
++    def setUp(self):
++        fd, self.path = tempfile.mkstemp(suffix=".db")
++        os.close(fd)
++        self.storage = Storage(self.path)
++        self.storage.upsert_device(
++            "192.168.1.20",
++            "00:11:22:33:44:55",
++            "Ethernet",
++            hostname="test-device",
++            vendor="Example",
++        )
++
++    def tearDown(self):
++        try:
++            os.unlink(self.path)
++        except FileNotFoundError:
++            pass
++
++    def test_probe_history_and_service_change(self):
++        first = self.storage.record_device_probe(
++            {
++                "ip": "192.168.1.20",
++                "online": True,
++                "latency_ms": 3.5,
++                "services": [{"proto": "tcp", "port": 80, "service": "HTTP"}],
++            }
++        )
++        self.assertFalse(first["changed"])
++
++        second = self.storage.record_device_probe(
++            {
++                "ip": "192.168.1.20",
++                "online": True,
++                "latency_ms": 4.0,
++                "services": [
++                    {"proto": "tcp", "port": 80, "service": "HTTP"},
++                    {"proto": "tcp", "port": 443, "service": "HTTPS"},
++                ],
++            }
++        )
++        self.assertTrue(second["changed"])
++        self.assertEqual(second["added"][0]["port"], 443)
++
++        profile = self.storage.device_profile("192.168.1.20", online_window=9999)
++        self.assertTrue(profile["monitored"])
++        self.assertTrue(profile["probe_online"])
++        self.assertEqual(profile["open_service_count"], 2)
++        self.assertEqual(len(self.storage.device_history("192.168.1.20")), 2)
++
++    def test_offline_transition_and_traffic_aggregation(self):
++        self.storage.record_device_probe(
++            {"ip": "192.168.1.20", "online": True, "latency_ms": 2.0, "services": []}
++        )
++        result = self.storage.record_device_probe(
++            {"ip": "192.168.1.20", "online": False, "latency_ms": None, "services": []}
++        )
++        self.assertEqual(result["state_change"], "offline")
++
++        self.storage.record_device_packet("192.168.1.20", "from", 100)
++        self.storage.record_device_packet("192.168.1.20", "to", 60)
++        traffic = self.storage.device_traffic("192.168.1.20")
++        self.assertEqual(traffic["bytes_from"], 100)
++        self.assertEqual(traffic["bytes_to"], 60)
++        self.assertEqual(traffic["packets_from"], 1)
++        self.assertEqual(traffic["packets_to"], 1)
++
++    def test_service_port_parser_is_bounded(self):
++        ports = parse_ports("22,443,443,0,70000,nope")
++        self.assertEqual(ports, (22, 443))
++
++
++if __name__ == "__main__":
++    unittest.main()

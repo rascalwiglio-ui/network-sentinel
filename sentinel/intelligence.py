@@ -61,6 +61,18 @@ def device_risk(device: dict, now: float | None = None) -> dict:
             score += 4
             reasons.append("hostname unknown")
 
+        exposed = int(device.get("open_service_count") or 0)
+        if exposed >= 8:
+            score += 12
+            reasons.append("many LAN services exposed")
+        elif exposed >= 4:
+            score += 5
+            reasons.append("multiple LAN services exposed")
+
+        if device.get("traffic_seen") and not device.get("trusted"):
+            score += 3
+            reasons.append("network traffic observed")
+
     if device.get("trusted"):
         score = max(0, score - 35)
         reasons.append("marked trusted")
@@ -134,6 +146,8 @@ def process_communications(
                         f"First post-baseline external connection to "
                         f"{row['remote_ip']}:{row['remote_port']} ({row['proto'].upper()})"
                     ),
+                    process=process,
+                    remote_ip=row["remote_ip"],
                 )
 
     if not baseline_ready:
@@ -150,6 +164,7 @@ def process_communications(
                     "anomaly_fanout",
                     title,
                     f"{process} currently talks to {count} distinct public IPs",
+                    process=process,
                 )
 
     for process, count in new_endpoints.items():
@@ -161,6 +176,7 @@ def process_communications(
                     "anomaly_endpoint_churn",
                     title,
                     f"{count} previously unseen external endpoints appeared in one monitor cycle",
+                    process=process,
                 )
 
 
@@ -197,4 +213,5 @@ def process_dns_records(storage, records: list[dict], baseline_ready: bool, burs
                 "anomaly_idn_domain",
                 title,
                 "Punycode can be legitimate, but visual look-alike domains deserve review.",
+                domain=domain,
             )

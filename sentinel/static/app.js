@@ -1,7 +1,8 @@
 const state = {
   devices: [], listeners: [], connections: [], alerts: [], traffic: [],
   network: {}, overview: {}, status: {}, dns: [], communications: [],
-  anomalies: [], baseline: {}, deviceFilter: 'all', alertFilter: 'open', query: ''
+  anomalies: [], baseline: {}, flows: [], timeline: [], incidents: [], capture: {}, fleet: {},
+  deviceFilter: 'all', alertFilter: 'open', query: ''
 };
 
 const $ = id => document.getElementById(id);
@@ -11,6 +12,12 @@ const shortWhen = ts => ts ? new Date(ts * 1000).toLocaleTimeString([], {hour:'2
 
 function fmtRate(bytesPerSecond){
   const units=['B/s','KB/s','MB/s','GB/s']; let v=Number(bytesPerSecond||0),i=0;
+  while(v>=1024 && i<units.length-1){v/=1024;i++;}
+  return `${v.toFixed(v>=100?0:v>=10?1:2)} ${units[i]}`;
+}
+
+function fmtBytes(bytes){
+  const units=['B','KB','MB','GB','TB']; let v=Number(bytes||0),i=0;
   while(v>=1024 && i<units.length-1){v/=1024;i++;}
   return `${v.toFixed(v>=100?0:v>=10?1:2)} ${units[i]}`;
 }
@@ -48,6 +55,10 @@ function renderOverview(){
   $('alertsMeta').textContent=`${o.alerts_high ?? 0} high · ${o.alerts_medium ?? 0} medium`;
   $('anomaliesCount').textContent=o.anomalies_open ?? '—';
   $('domainsCount').textContent=o.known_domains ?? '—';
+  $('incidentsCount').textContent=o.incidents_open ?? '—';
+  const cap=state.capture||{};
+  $('captureState').textContent=cap.running?'LIVE':cap.configured?'WAIT':'OFF';
+  $('captureMeta').textContent=cap.running?`${fmtBytes(cap.bytes)} observed`:cap.configured?'sensor unavailable':'optional sensor';
   $('baselineMeta').textContent=state.baseline.ready?'baseline ready':'learning baseline';
   $('rxRate').textContent=fmtRate(o.rx_bps);
   $('txRate').textContent=fmtRate(o.tx_bps);
@@ -74,6 +85,7 @@ function renderBaseline(){
   $('knownProcesses').textContent=counts.processes ?? 0;
   $('knownEndpoints').textContent=counts.endpoints ?? 0;
   $('knownDomains').textContent=counts.domains ?? 0;
+  $('knownFlows').textContent=counts.flows ?? 0;
 
   const supported=b.dns_supported;
   $('dnsPill').className=`pill ${supported===true?'good':supported===false?'warn':'neutral'}`;
@@ -115,6 +127,60 @@ function renderCommunications(){
     <td>${esc(c.seen_count)}</td>
     <td>${when(c.last_seen)}</td>
   </tr>`).join(''):`<tr><td colspan="5"><div class="empty">No learned external endpoints</div></td></tr>`;
+}
+
+function renderCapture(){
+  const c=state.capture||{};
+  const active=Boolean(c.running), configured=Boolean(c.configured);
+  $('capturePill').className=`pill ${active?'good':configured?'warn':'neutral'}`;
+  $('capturePill').textContent=active?'live':configured?'waiting':'disabled';
+  $('capturePackets').textContent=Number(c.packets||0).toLocaleString();
+  $('captureBytes').textContent=fmtBytes(c.bytes||0);
+  $('captureDns').textContent=Number(c.dns_events||0).toLocaleString();
+  $('capturePulse').className=active?'capture-live':'';
+  $('captureTitle').textContent=active?'Metadata sensor active':configured?'Capture configured but unavailable':'Capture is optional';
+  $('captureDescription').textContent=active
+    ? 'Only packet metadata is aggregated; payload bytes are not stored.'
+    : (c.error || 'Use scripts/enable-capture.cmd, install Npcap on Windows, then run scripts/run-capture.cmd.');
+}
+
+function renderIncidents(){
+  const rows=state.incidents.filter(i=>matchesQuery(i.title,i.summary,i.process,i.remote_ip,i.domain,i.severity));
+  const open=state.incidents.filter(i=>i.status==='open');
+  $('incidentBadge').className=`pill ${open.length?'warn':'good'}`;
+  $('incidentBadge').textContent=`${open.length} open`;
+  $('incidentFeed').innerHTML=rows.length?rows.slice(0,18).map(i=>`
+    <div class="incident-item ${esc(i.severity)} ${i.status==='closed'?'closed':''}">
+      <div class="incident-score"><b>${esc(i.score)}</b><span>${esc(i.severity)}</span></div>
+      <div class="incident-copy"><strong>${esc(i.title)}</strong><span>${esc(i.summary)}</span>
+        <small>${esc(i.process||i.remote_ip||i.domain||'correlated local telemetry')} · ${when(i.updated_at)}</small></div>
+      <div class="incident-actions">${i.status==='open'?`<button class="ack-btn" onclick="closeIncident(${i.id})">close</button>`:'closed'}</div>
+    </div>`).join(''):`<div class="empty">No correlated incidents</div>`;
+}
+
+function renderFlows(){
+  const rows=state.flows.filter(f=>matchesQuery(f.process,f.proto,f.direction,f.local_ip,f.remote_ip,f.local_port,f.remote_port));
+  $('flowBadge').textContent=`${state.flows.length} flows`;
+  $('flowsTable').innerHTML=rows.length?rows.slice(0,300).map(f=>`<tr>
+    <td><span class="flow-direction ${esc(f.direction)}">${esc(f.direction)}</span></td>
+    <td><span class="device-name">${esc(f.process||'unknown')}</span><span class="subline">${f.pid?`PID ${f.pid}`:''}</span></td>
+    <td>${esc(String(f.proto).toUpperCase())}</td>
+    <td>${esc(f.remote_ip)}:${esc(f.remote_port||'')}</td>
+    <td>${Number(f.packets||0).toLocaleString()}</td>
+    <td>${fmtBytes(f.bytes||0)}</td>
+  </tr>`).join(''):`<tr><td colspan="6"><div class="empty">No packet-derived flows yet. Core socket monitoring is still active.</div></td></tr>`;
+}
+
+function renderTimeline(){
+  const rows=state.timeline.filter(e=>matchesQuery(e.category,e.severity,e.title,e.details,e.process,e.remote_ip,e.domain));
+  $('timelineBadge').textContent=`${rows.length} events`;
+  $('timelineFeed').innerHTML=rows.length?rows.slice(0,70).map(e=>`
+    <div class="timeline-item">
+      <div class="timeline-dot ${esc(e.category)} ${esc(e.severity)}"></div>
+      <div class="timeline-copy"><strong>${esc(e.title)}</strong><span>${esc(e.details)}</span>
+        <small>${esc(e.category)}${e.process?` · ${esc(e.process)}`:''}${e.remote_ip?` · ${esc(e.remote_ip)}`:''}</small></div>
+      <time>${shortWhen(e.created_at)}</time>
+    </div>`).join(''):`<div class="empty">No timeline events</div>`;
 }
 
 function renderNetworkInfo(){
@@ -202,18 +268,116 @@ function riskBadge(risk){
   return `<span class="risk-badge ${esc(r.level)}" title="${esc(title)}"><b>${esc(r.score)}</b><span>${esc(r.level)}</span></span>`;
 }
 
+function probeMeta(device){
+  if(!device.monitored) return ['pending','neutral'];
+  if(device.probe_online) return ['reachable','good'];
+  return ['unreachable','warn'];
+}
+
+function renderFleet(){
+  const f=state.fleet||{};
+  $('fleetKnown').textContent=f.known ?? 0;
+  $('fleetMonitored').textContent=f.monitored ?? 0;
+  $('fleetReachable').textContent=f.reachable ?? 0;
+  $('fleetUnreachable').textContent=f.unreachable ?? 0;
+  $('fleetServices').textContent=f.active_services ?? 0;
+  $('fleetTrafficSeen').textContent=f.traffic_seen_recently ?? 0;
+
+  const status=$('fleetStatus');
+  if(f.error){status.className='pill bad';status.textContent='error';status.title=f.error;}
+  else if(!f.enabled){status.className='pill neutral';status.textContent='disabled';}
+  else if(f.running){status.className='pill warn';status.textContent='probing';}
+  else {status.className='pill good';status.textContent=f.last_scan?'active':'starting';}
+
+  const rows=state.devices.filter(d=>matchesQuery(d.ip,d.mac,d.hostname,d.vendor,d.risk?.reasons?.join(' ')));
+  $('fleetTable').innerHTML=rows.length?rows.map(d=>{
+    const [label,cls]=probeMeta(d);
+    const t=d.traffic||{};
+    const traffic=Number(t.bytes_from||0)+Number(t.bytes_to||0);
+    return `<tr>
+      <td><span class="device-name">${esc(d.hostname||(d.is_gateway?'Gateway':'Unknown device'))}</span><span class="subline">${esc(d.ip)} · ${esc(d.vendor||'unknown vendor')}</span></td>
+      <td><span class="pill ${cls}">${label}</span></td>
+      <td>${d.probe_latency_ms==null?'—':`${Number(d.probe_latency_ms).toFixed(1)} ms`}</td>
+      <td><span class="service-count">${Number(d.open_service_count||0)}</span></td>
+      <td>${traffic?fmtBytes(traffic):'—'}<span class="subline">${t.last_seen?when(t.last_seen):'sensor has not seen traffic'}</span></td>
+      <td>${when(d.last_probe)}</td>
+      <td class="row-actions"><button class="ack-btn" onclick="probeDevice('${encodeURIComponent(d.ip)}')">probe</button><button class="ack-btn" onclick="openDeviceDrawer('${encodeURIComponent(d.ip)}')">inspect</button></td>
+    </tr>`;
+  }).join(''):`<tr><td colspan="7"><div class="empty">No discovered devices yet</div></td></tr>`;
+}
+
+async function openDeviceDrawer(encodedIp){
+  const ip=decodeURIComponent(encodedIp);
+  const drawer=$('deviceDrawer'), backdrop=$('deviceDrawerBackdrop');
+  drawer.classList.add('open');backdrop.classList.add('open');drawer.setAttribute('aria-hidden','false');
+  $('drawerTitle').textContent=ip;$('drawerSubtitle').textContent='Loading device profile...';
+  $('drawerBody').innerHTML='<div class="empty">Loading telemetry...</div>';
+  try{
+    const [profile,history]=await Promise.all([
+      api(`/api/devices/${encodeURIComponent(ip)}/profile`),
+      api(`/api/devices/${encodeURIComponent(ip)}/history?limit=40`)
+    ]);
+    const services=profile.services||[], active=services.filter(x=>x.active);
+    const traffic=profile.traffic||{};
+    const risk=profile.risk||{score:0,level:'low',reasons:[]};
+    $('drawerTitle').textContent=profile.hostname || (profile.is_gateway?'Gateway':'Unknown device');
+    $('drawerSubtitle').textContent=`${profile.ip} · ${profile.mac||'MAC unknown'} · ${profile.vendor||'vendor unknown'}`;
+    const reasons=(risk.reasons||[]).map(x=>`<li>${esc(x)}</li>`).join('') || '<li>No notable local heuristic factors</li>';
+    const serviceHtml=active.length?active.map(x=>`<span class="service-chip">${esc(x.service)} <b>${esc(x.port)}</b></span>`).join(''):'<span class="muted">No monitored TCP services currently open</span>';
+    const historyHtml=history.length?history.slice(0,18).map(h=>`<div class="history-row"><span class="dot ${h.online?'online':''}"></span><span>${h.online?'reachable':'unreachable'}</span><b>${h.latency_ms==null?'—':`${Number(h.latency_ms).toFixed(1)} ms`}</b><time>${when(h.observed_at)}</time></div>`).join(''):'<div class="empty">No probe history yet</div>';
+    $('drawerBody').innerHTML=`
+      <div class="drawer-grid">
+        <div class="drawer-stat"><span>Risk</span><strong class="risk-text ${esc(risk.level)}">${esc(risk.score)}/100</strong></div>
+        <div class="drawer-stat"><span>Probe</span><strong>${profile.monitored?(profile.probe_online?'reachable':'unreachable'):'pending'}</strong></div>
+        <div class="drawer-stat"><span>Latency</span><strong>${profile.probe_latency_ms==null?'—':`${Number(profile.probe_latency_ms).toFixed(1)} ms`}</strong></div>
+        <div class="drawer-stat"><span>Services</span><strong>${active.length}</strong></div>
+      </div>
+      <div class="drawer-section"><h3>Exposed LAN services</h3><div class="service-list">${serviceHtml}</div></div>
+      <div class="drawer-section"><h3>Sensor-observed traffic</h3>
+        <div class="traffic-pairs"><div><span>From device</span><strong>${fmtBytes(traffic.bytes_from||0)}</strong><small>${Number(traffic.packets_from||0).toLocaleString()} packets</small></div><div><span>To device</span><strong>${fmtBytes(traffic.bytes_to||0)}</strong><small>${Number(traffic.packets_to||0).toLocaleString()} packets</small></div></div>
+        <p class="drawer-note">These counters only include frames visible to the optional capture sensor. They are not guaranteed to represent all traffic on a switched LAN.</p>
+      </div>
+      <div class="drawer-section"><h3>Risk factors</h3><ul class="reason-list">${reasons}</ul></div>
+      <div class="drawer-section"><h3>Reachability history</h3><div class="history-list">${historyHtml}</div></div>
+      <div class="drawer-actions"><button class="btn btn-primary" onclick="probeDevice('${encodeURIComponent(ip)}')">Probe now</button><button class="btn btn-ghost" onclick="setTrust('${encodeURIComponent(ip)}',${!profile.trusted})">${profile.trusted?'Remove trust':'Mark trusted'}</button></div>`;
+  }catch(e){$('drawerBody').innerHTML=`<div class="empty">Unable to load device: ${esc(e.message)}</div>`;}
+}
+
+function closeDeviceDrawer(){
+  $('deviceDrawer').classList.remove('open');$('deviceDrawerBackdrop').classList.remove('open');$('deviceDrawer').setAttribute('aria-hidden','true');
+}
+
+async function probeDevice(encodedIp){
+  const ip=decodeURIComponent(encodedIp);
+  try{await api(`/api/devices/${encodeURIComponent(ip)}/probe`,{method:'POST'});toast(`Probe queued for ${ip}`);}
+  catch(e){toast(`Probe failed: ${e.message}`);}
+}
+
+async function fleetScan(){
+  const btn=$('fleetScanBtn');btn.disabled=true;btn.textContent='Probe queued...';
+  try{await api('/api/fleet/scan',{method:'POST'});toast('Fleet probe queued');}
+  catch(e){toast(e.message);}finally{setTimeout(()=>{btn.disabled=false;btn.textContent='Probe all devices';},2200);}
+}
+
 function renderDevices(){
   let rows=state.devices.filter(d=>matchesQuery(d.ip,d.mac,d.hostname,d.vendor,d.risk?.reasons?.join(' ')));
   if(state.deviceFilter==='online') rows=rows.filter(d=>d.online);
   if(state.deviceFilter==='untrusted') rows=rows.filter(d=>d.online&&!d.trusted&&!d.is_gateway);
   if(state.deviceFilter==='risk') rows=rows.filter(d=>(d.risk?.score||0)>=30);
-  $('devicesTable').innerHTML=rows.length?rows.map(d=>`<tr>
-    <td><span class="device-status"><span class="dot ${d.online?'online':''}"></span>${d.online?'Online':'Offline'}</span></td>
-    <td><span class="device-name">${esc(d.hostname || (d.is_gateway?'Gateway':'Unknown device'))}</span><span class="subline">${d.is_gateway?'default gateway':esc(d.interface||'')}</span></td>
-    <td>${esc(d.ip)}</td><td>${esc(d.mac||'—')}</td><td>${esc(d.vendor||'—')}</td>
-    <td>${riskBadge(d.risk)}</td>
-    <td><button class="trust-btn ${d.trusted?'trusted':''}" onclick="setTrust('${encodeURIComponent(d.ip)}',${!d.trusted})">${d.trusted?'Trusted':'Mark trusted'}</button></td>
-    <td>${when(d.last_seen)}</td></tr>`).join(''):`<tr><td colspan="8"><div class="empty">No matching devices</div></td></tr>`;
+  $('devicesTable').innerHTML=rows.length?rows.map(d=>{
+    const [probeLabel,probeClass]=probeMeta(d);
+    return `<tr>
+      <td><span class="device-status"><span class="dot ${d.online?'online':''}"></span>${d.online?'Online':'Offline'}</span></td>
+      <td><span class="device-name">${esc(d.hostname || (d.is_gateway?'Gateway':'Unknown device'))}</span><span class="subline">${d.is_gateway?'default gateway':esc(d.interface||'')}</span></td>
+      <td>${esc(d.ip)}</td><td>${esc(d.mac||'—')}</td><td>${esc(d.vendor||'—')}</td>
+      <td>${riskBadge(d.risk)}</td>
+      <td><span class="pill ${probeClass}">${probeLabel}</span><span class="subline">${d.probe_latency_ms==null?'':`${Number(d.probe_latency_ms).toFixed(1)} ms`}</span></td>
+      <td>${Number(d.open_service_count||0)}</td>
+      <td><button class="trust-btn ${d.trusted?'trusted':''}" onclick="setTrust('${encodeURIComponent(d.ip)}',${!d.trusted})">${d.trusted?'Trusted':'Mark trusted'}</button></td>
+      <td>${when(d.last_seen)}</td>
+      <td><button class="ack-btn" onclick="openDeviceDrawer('${encodeURIComponent(d.ip)}')">inspect</button></td>
+    </tr>`;
+  }).join(''):`<tr><td colspan="11"><div class="empty">No matching devices</div></td></tr>`;
 }
 
 function renderSockets(){
@@ -245,6 +409,8 @@ async function setTrust(encodedIp,trusted){
   catch(e){toast(`Unable to update trust: ${e.message}`);}
 }
 
+async function closeIncident(id){try{await api(`/api/incidents/${id}/close`,{method:'POST'});toast('Incident closed');await refresh();}catch(e){toast(e.message);}}
+
 async function ack(id){try{await api(`/api/alerts/${id}/ack`,{method:'POST'});await refresh();}catch(e){toast(e.message);}}
 async function ackAll(){try{const r=await api('/api/alerts/ack-all',{method:'POST'});toast(`${r.acknowledged} alerts acknowledged`);await refresh();}catch(e){toast(e.message);}}
 async function scanNow(){
@@ -255,24 +421,26 @@ async function scanNow(){
 
 function renderAll(){
   renderOverview();renderBaseline();renderAnomalies();renderDns();renderCommunications();
-  renderNetworkInfo();renderTopology();drawTraffic();renderDevices();renderSockets();renderAlerts();
+  renderCapture();renderIncidents();renderFlows();renderTimeline();
+  renderNetworkInfo();renderTopology();drawTraffic();renderFleet();renderDevices();renderSockets();renderAlerts();
 }
 
 async function refresh(){
   try{
-    const [status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline]=await Promise.all([
+    const [status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline,flows,timeline,incidents,capture,fleet]=await Promise.all([
       api('/api/status'),api('/api/overview'),api('/api/network'),api('/api/devices'),api('/api/listeners'),api('/api/connections'),api('/api/alerts'),api('/api/traffic'),
-      api('/api/dns?limit=250'),api('/api/communications?limit=300'),api('/api/anomalies?limit=100'),api('/api/baseline')
+      api('/api/dns?limit=250'),api('/api/communications?limit=300'),api('/api/anomalies?limit=100'),api('/api/baseline'),
+      api('/api/flows?limit=300'),api('/api/timeline?limit=250'),api('/api/incidents?limit=100'),api('/api/capture'),api('/api/fleet')
     ]);
-    Object.assign(state,{status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline});renderAll();
+    Object.assign(state,{status,overview,network,devices,listeners,connections,alerts,traffic,dns,communications,anomalies,baseline,flows,timeline,incidents,capture,fleet});renderAll();
   }catch(e){$('sideStatus').textContent='API unavailable';$('sideDot').className='status-dot';console.error(e);}
 }
 
-$('scanBtn').addEventListener('click',scanNow);$('ackAllBtn').addEventListener('click',ackAll);
-$('globalSearch').addEventListener('input',e=>{state.query=e.target.value.trim().toLowerCase();renderDevices();renderSockets();renderAlerts();renderDns();renderCommunications();});
+$('scanBtn').addEventListener('click',scanNow);$('fleetScanBtn').addEventListener('click',fleetScan);$('ackAllBtn').addEventListener('click',ackAll);
+$('globalSearch').addEventListener('input',e=>{state.query=e.target.value.trim().toLowerCase();renderFleet();renderDevices();renderSockets();renderAlerts();renderDns();renderCommunications();renderIncidents();renderFlows();renderTimeline();});
 document.querySelectorAll('[data-device-filter]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-device-filter]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.deviceFilter=b.dataset.deviceFilter;renderDevices();}));
 document.querySelectorAll('[data-alert-filter]').forEach(b=>b.addEventListener('click',()=>{document.querySelectorAll('[data-alert-filter]').forEach(x=>x.classList.remove('active'));b.classList.add('active');state.alertFilter=b.dataset.alertFilter;renderAlerts();}));
 document.querySelectorAll('.nav-link').forEach(a=>a.addEventListener('click',()=>{document.querySelectorAll('.nav-link').forEach(x=>x.classList.remove('active'));a.classList.add('active');}));
-window.addEventListener('resize',drawTraffic);
+window.addEventListener('resize',drawTraffic);document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDeviceDrawer();});
 
 refresh();setInterval(refresh,3000);
