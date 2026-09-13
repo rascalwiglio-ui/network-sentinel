@@ -1,6 +1,7 @@
 import re
 import subprocess
 
+
 def _linux_proc_arp():
     out = []
     try:
@@ -10,15 +11,21 @@ def _linux_proc_arp():
                 parts = line.split()
                 if len(parts) >= 6:
                     ip, _, flags, mac, _, iface = parts[:6]
-                    if mac != "00:00:00:00:00:00" and flags != "0x0":
-                        out.append({
-                            "ip": ip,
-                            "mac": mac.lower(),
-                            "interface": iface,
-                        })
+                    if (
+                        mac != "00:00:00:00:00:00"
+                        and flags != "0x0"
+                    ):
+                        out.append(
+                            {
+                                "ip": ip,
+                                "mac": mac.lower(),
+                                "interface": iface,
+                            }
+                        )
     except OSError:
         pass
     return out
+
 
 def _arp_command():
     try:
@@ -26,8 +33,11 @@ def _arp_command():
             ["arp", "-a"],
             capture_output=True,
             text=True,
-            timeout=3,
+            timeout=4,
             check=False,
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            ),
         )
     except (OSError, subprocess.SubprocessError):
         return []
@@ -40,6 +50,7 @@ def _arp_command():
         r"([0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5})\s+",
         re.MULTILINE,
     )
+
     unix_re = re.compile(
         r"\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+"
         r"([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})"
@@ -47,27 +58,34 @@ def _arp_command():
     )
 
     for ip, mac in win_re.findall(result.stdout):
-        key = (ip, mac)
+        normalized = mac.replace("-", ":").lower()
+        key = (ip, normalized)
         if key not in seen:
-            entries.append({
-                "ip": ip,
-                "mac": mac.replace("-", ":").lower(),
-                "interface": "unknown",
-            })
+            entries.append(
+                {
+                    "ip": ip,
+                    "mac": normalized,
+                    "interface": "unknown",
+                }
+            )
             seen.add(key)
 
     for match in unix_re.finditer(result.stdout):
         ip, mac, iface = match.groups()
-        key = (ip, mac)
+        normalized = mac.lower()
+        key = (ip, normalized)
         if key not in seen:
-            entries.append({
-                "ip": ip,
-                "mac": mac.lower(),
-                "interface": iface or "unknown",
-            })
+            entries.append(
+                {
+                    "ip": ip,
+                    "mac": normalized,
+                    "interface": iface or "unknown",
+                }
+            )
             seen.add(key)
 
     return entries
+
 
 def collect_arp():
     entries = _linux_proc_arp()
