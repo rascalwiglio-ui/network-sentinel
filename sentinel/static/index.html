@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Network Sentinel</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#0b0e14;--panel:#121722;--line:#263042;
+  --text:#e7edf7;--muted:#94a3b8;--good:#76d69b;
+  --warn:#ffc857;--bad:#ff6b6b;--accent:#7aa2f7;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+font-family:Inter,system-ui,-apple-system,Segoe UI,sans-serif}
+header{padding:22px 28px;border-bottom:1px solid var(--line);
+display:flex;justify-content:space-between;align-items:center;
+position:sticky;top:0;background:rgba(11,14,20,.94);backdrop-filter:blur(8px)}
+.brand{font-weight:800;letter-spacing:.08em}
+.brand span{color:var(--accent)}
+.badge{font-size:12px;border:1px solid var(--line);padding:6px 10px;border-radius:999px;color:var(--muted)}
+main{max-width:1400px;margin:auto;padding:24px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px}
+.card{padding:18px}
+.card .value{font-size:30px;font-weight:800;margin-top:7px}
+.label{color:var(--muted);font-size:13px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.panel{overflow:hidden}
+.panel h2{font-size:16px;padding:16px 18px;margin:0;border-bottom:1px solid var(--line)}
+.tablewrap{max-height:390px;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:10px 13px;text-align:left;border-bottom:1px solid #1e2634}
+th{position:sticky;top:0;background:#161c28;color:var(--muted);font-weight:600}
+tr:hover{background:#151b27}
+.sev-high{color:var(--bad)}
+.sev-medium{color:var(--warn)}
+.sev-low{color:var(--good)}
+button{background:#1d2737;color:var(--text);border:1px solid var(--line);
+border-radius:8px;padding:6px 8px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+small{color:var(--muted)}
+@media(max-width:900px){
+.cards{grid-template-columns:1fr 1fr}.grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">NETWORK <span>SENTINEL</span></div>
+  <div id="status" class="badge">connecting...</div>
+</header>
+<main>
+  <section class="cards">
+    <div class="card"><div class="label">DISPOSITIVI NOTI</div><div id="devicesCount" class="value">-</div></div>
+    <div class="card"><div class="label">PORTE IN ASCOLTO</div><div id="listenersCount" class="value">-</div></div>
+    <div class="card"><div class="label">CONNESSIONI</div><div id="connectionsCount" class="value">-</div></div>
+    <div class="card"><div class="label">ALERT APERTI</div><div id="alertsCount" class="value">-</div></div>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Alert recenti</h2>
+      <div class="tablewrap">
+      <table><thead><tr><th>Severità</th><th>Evento</th><th>Dettagli</th><th></th></tr></thead>
+      <tbody id="alerts"></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Dispositivi LAN osservati</h2>
+      <div class="tablewrap">
+      <table><thead><tr><th>IP</th><th>MAC</th><th>Interfaccia</th><th>Ultima vista</th></tr></thead>
+      <tbody id="devices"></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Porte locali in ascolto</h2>
+      <div class="tablewrap">
+      <table><thead><tr><th>Proto</th><th>Bind</th><th>Porta</th><th>Processo</th></tr></thead>
+      <tbody id="listeners"></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Connessioni attive</h2>
+      <div class="tablewrap">
+      <table><thead><tr><th>Proto</th><th>Locale</th><th>Remoto</th><th>Stato</th><th>Processo</th></tr></thead>
+      <tbody id="connections"></tbody></table>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const when = ts => ts ? new Date(ts*1000).toLocaleString() : "-";
+
+async function getJSON(url, options){
+  const r = await fetch(url, options);
+  if(!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+}
+
+async function ack(id){
+  await getJSON(`/api/alerts/${id}/ack`, {method:"POST"});
+  refresh();
+}
+
+async function refresh(){
+  try{
+    const [status, devices, listeners, connections, alerts] = await Promise.all([
+      getJSON("/api/status"), getJSON("/api/devices"), getJSON("/api/listeners"),
+      getJSON("/api/connections"), getJSON("/api/alerts")
+    ]);
+
+    document.getElementById("status").textContent =
+      status.running ? `online · ultimo scan ${when(status.last_scan)}` : "offline";
+
+    document.getElementById("devicesCount").textContent = devices.length;
+    document.getElementById("listenersCount").textContent = listeners.length;
+    document.getElementById("connectionsCount").textContent = status.connection_count;
+    document.getElementById("alertsCount").textContent = alerts.filter(a=>!a.acknowledged).length;
+
+    document.getElementById("devices").innerHTML = devices.map(d=>`
+      <tr><td>${esc(d.ip)}</td><td>${esc(d.mac)}</td><td>${esc(d.interface)}</td><td>${when(d.last_seen)}</td></tr>
+    `).join("");
+
+    document.getElementById("listeners").innerHTML = listeners.map(x=>`
+      <tr><td>${esc(x.proto.toUpperCase())}</td><td>${esc(x.ip)}</td><td>${esc(x.port)}</td>
+      <td>${esc(x.process || "—")} <small>${x.pid ? `PID ${x.pid}`:""}</small></td></tr>
+    `).join("");
+
+    document.getElementById("connections").innerHTML = connections.slice(0,250).map(x=>`
+      <tr><td>${esc(x.proto.toUpperCase())}</td>
+      <td>${esc((x.local.ip||"") + (x.local.port ? ":"+x.local.port:""))}</td>
+      <td>${esc((x.remote.ip||"") + (x.remote.port ? ":"+x.remote.port:""))}</td>
+      <td>${esc(x.status)}</td><td>${esc(x.process || "—")}</td></tr>
+    `).join("");
+
+    document.getElementById("alerts").innerHTML = alerts.map(a=>`
+      <tr style="${a.acknowledged?'opacity:.48':''}">
+      <td class="sev-${esc(a.severity)}">${esc(a.severity.toUpperCase())}</td>
+      <td><b>${esc(a.title)}</b><br><small>${when(a.created_at)}</small></td>
+      <td>${esc(a.details)}</td>
+      <td>${a.acknowledged ? "✓" : `<button onclick="ack(${a.id})">ack</button>`}</td>
+      </tr>
+    `).join("");
+  }catch(e){
+    document.getElementById("status").textContent = "errore API";
+    console.error(e);
+  }
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
